@@ -8,6 +8,7 @@
 #include <hackynavi/hdmi_link.hpp>
 #include <hackynavi/dp_training.hpp>
 #include <hackynavi/edid_acquire.hpp>
+#include <hackynavi/hdmi_stream.hpp>
 
 // Kernel owner of real DMCUB runtime DMA and physical display transports.
 // Caller holds device-wide display/power/reset/removal exclusion, establishes
@@ -51,6 +52,17 @@ public:
     // independently of confirmed local PHY retirement. No new EDID guesses.
     IOReturn disableHdmi(uint8_t path, const hackynavi::dmcub::PollOptions&,
         hackynavi::hdmitmds::HardwareResult&);
+    // Requires this owner's enabled HDMI link and an exclusively programmed
+    // pixel/scanout pipeline. Uses the actual saved frontend/ROM PHY route;
+    // callers cannot substitute a different hardware encoder. Sink comes from
+    // validated EDID; AVI encoding must match enableHdmi's pixel encoding.
+    IOReturn prepareHdmiStream(uint8_t path, uint8_t pipe, const hackynavi::avi::Config&,
+        const hackynavi::edid::Monitor&, const hackynavi::dmcub::PollOptions&,
+        hackynavi::hdmistream::Result&);
+    IOReturn startHdmiStream(uint8_t path, const hackynavi::dmcub::PollOptions&,
+        hackynavi::hdmistream::Result&);
+    IOReturn stopHdmiStream(uint8_t path, const hackynavi::dmcub::PollOptions&,
+        hackynavi::hdmistream::Result&);
     // One serialized batch on the ROM-selected AUX engine. The final request
     // must end any MOT chain; real STOP/release follows even a protocol NACK.
     // Results retain the actual wire reply; ambiguous I/O retains ownership.
@@ -102,6 +114,8 @@ private:
     IOReturn disableHdmiLocked(uint8_t, const hackynavi::dmcub::PollOptions&,
         hackynavi::hdmitmds::HardwareResult&);
     void clearLinkMetadata(uint8_t);
+    IOReturn stopHdmiStreamLocked(uint8_t, const hackynavi::dmcub::PollOptions&,
+        hackynavi::hdmistream::Result&);
     static bool read32(void*, uint32_t, uint32_t&);
     static bool write32(void*, uint32_t, uint32_t);
     static bool readMemory(void*, uint64_t, uint8_t*, size_t);
@@ -137,5 +151,9 @@ private:
     LinkKind linkKinds_[hackynavi::kMaxDisplayPaths];
     hackynavi::hdmiddc::Clock hdmiClocks_[hackynavi::kMaxDisplayPaths];
     bool hdmiScdc_[hackynavi::kMaxDisplayPaths];
+    hackynavi::hdmitmds::Encoding hdmiEncoding_[hackynavi::kMaxDisplayPaths];
+    uint8_t streamPipe_[hackynavi::kMaxDisplayPaths];
+    hackynavi::hdmistream::Layout streamLayout_;
+    hackynavi::hdmistream::Controller streams_[hackynavi::kMaxDisplayPaths];
 };
 #endif

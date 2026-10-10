@@ -34,6 +34,14 @@ void rejected(const std::vector<uint8_t>& b,e::Status wanted,size_t bytes=0) {
     CHECK(std::memcmp(&m,&before,sizeof(m))==0);
 }
 void basic() {
+    for(unsigned flags=0;flags<256;++flags){
+        auto bytes=fixture();const size_t at=128+bytes[130];
+        bytes[at]=0xe2;bytes[at+1]=0;bytes[at+2]=uint8_t(flags);bytes[130]+=3;fix(bytes);
+        e::Monitor parsed={};CHECK(e::parse(bytes.data(),bytes.size(),parsed)==e::Status::Ok);
+        CHECK(parsed.rgbQuantizationSelectable==bool(flags&0x40));CHECK(parsed.yccQuantizationSelectable==bool(flags&0x80));
+        bytes[at+3]=0xe2;bytes[at+4]=0;bytes[at+5]=uint8_t(flags^0x40);bytes[130]+=3;fix(bytes);
+        rejected(bytes,e::Status::ConflictingCapabilities);
+    }
     auto b=fixture();e::Monitor m={};CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok);
     CHECK(m.manufacturer==0x4c2d && m.product==0x1234 && m.serial==0x5678);
     CHECK(m.hdmi && m.scdc && m.scrambleLowRates && m.ycbcr444 && m.deepColor444 && m.frlCapable);

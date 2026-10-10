@@ -59,7 +59,8 @@ bool vicTiming(uint8_t vic,Timing& t) {
     return true;
 }
 struct Caps {
-    bool legacy,forum;
+    bool legacy,forum,video;
+    uint8_t videoFlags;
     uint32_t legacyClock,forumClock;
     uint8_t legacyFlags,forumFlags,frl;
     uint32_t only420[8];
@@ -114,7 +115,13 @@ Status cta(const uint8_t* p,Monitor& m,Caps& caps,size_t block) {
                 const auto s=capabilities(db,len,oui==0xc45dd8,m,caps);if(s!=Status::Ok)return s;
             }
         } else if(tag==7 && len>=1) {
-            if(db[1]==0x79) {
+            if(db[1]==0x00) {
+                if(len!=2)return Status::BadExtension;
+                if(caps.video&&caps.videoFlags!=db[2])return Status::ConflictingCapabilities;
+                caps.video=true;caps.videoFlags=db[2];
+                m.rgbQuantizationSelectable=(db[2]&0x40)!=0;
+                m.yccQuantizationSelectable=(db[2]&0x80)!=0;
+            } else if(db[1]==0x79) {
                 const auto s=capabilities(db,len,true,m,caps);if(s!=Status::Ok)return s;
             } else if(db[1]==0x78) {
                 if(block!=1 || i!=4 || len!=2 || !db[2])return Status::BadExtension;

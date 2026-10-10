@@ -124,6 +124,14 @@ target_include_directories(hackynavi_edid PUBLIC include)
 add_library(hackynavi_edid_acquire STATIC src/edid_acquire.cpp)
 target_include_directories(hackynavi_edid_acquire PUBLIC include)
 target_link_libraries(hackynavi_edid_acquire PUBLIC hackynavi_edid hackynavi_dp_aux hackynavi_hdmi_ddc)
+add_library(hackynavi_hdmi_stream STATIC src/hdmi_stream.cpp)
+target_include_directories(hackynavi_hdmi_stream PUBLIC include)
+target_link_libraries(hackynavi_hdmi_stream PUBLIC hackynavi_avi hackynavi_otg hackynavi_vpg)
+add_library(hackynavi_avi STATIC src/avi.cpp)
+target_include_directories(hackynavi_avi PUBLIC include)
+add_library(hackynavi_vpg STATIC src/vpg.cpp)
+target_include_directories(hackynavi_vpg PUBLIC include)
+target_link_libraries(hackynavi_vpg PUBLIC hackynavi_discovery)
 add_library(hackynavi_otg STATIC src/otg.cpp)
 target_include_directories(hackynavi_otg PUBLIC include)
 target_link_libraries(hackynavi_otg PUBLIC hackynavi_discovery)
@@ -131,7 +139,7 @@ add_library(hackynavi_hdmi_link STATIC src/hdmi_link.cpp)
 target_include_directories(hackynavi_hdmi_link PUBLIC include)
 target_link_libraries(hackynavi_hdmi_link PUBLIC hackynavi_dio_link hackynavi_hdmi_ddc)
 foreach(target hackynavi_discovery hackynavi_device_discovery hackynavi_ip_layout
-               hackynavi_gfx_compute hackynavi_atom_vm hackynavi_hdmi_link hackynavi_edid hackynavi_edid_acquire hackynavi_otg
+               hackynavi_gfx_compute hackynavi_atom_vm hackynavi_hdmi_link hackynavi_edid hackynavi_edid_acquire hackynavi_otg hackynavi_vpg hackynavi_avi hackynavi_hdmi_stream
                hackynavi_memory_layout hackynavi_gpu_vm hackynavi_vram_allocator hackynavi_vram_transfer
                hackynavi_vram_reservations hackynavi_boot_display hackynavi_boot_display_stop hackynavi_bootstrap_quiesce
                hackynavi_mode1_reset hackynavi_nbio
@@ -276,6 +284,15 @@ if(BUILD_TESTING)
   add_executable(otg-tests tests/otg_tests.cpp)
   target_link_libraries(otg-tests PRIVATE hackynavi_otg)
   add_test(NAME otg COMMAND otg-tests)
+  add_executable(vpg-tests tests/vpg_tests.cpp)
+  target_link_libraries(vpg-tests PRIVATE hackynavi_vpg)
+  add_test(NAME vpg COMMAND vpg-tests)
+  add_executable(avi-tests tests/avi_tests.cpp)
+  target_link_libraries(avi-tests PRIVATE hackynavi_avi)
+  add_test(NAME avi COMMAND avi-tests)
+  add_executable(hdmi-stream-tests tests/hdmi_stream_tests.cpp)
+  target_link_libraries(hdmi-stream-tests PRIVATE hackynavi_hdmi_stream)
+  add_test(NAME hdmi-stream COMMAND hdmi-stream-tests)
 endif()
 
 if(HACKYNAVI_SANITIZERS)
@@ -283,7 +300,7 @@ if(HACKYNAVI_SANITIZERS)
     message(FATAL_ERROR "This sanitizer configuration requires Clang/GCC on macOS or Linux")
   endif()
   foreach(target hackynavi_rom hackynavi_discovery hackynavi_device_discovery hackynavi_ip_layout
-                 hackynavi_gfx_compute hackynavi_atom_vm hackynavi_hdmi_link hackynavi_edid hackynavi_edid_acquire hackynavi_otg
+                 hackynavi_gfx_compute hackynavi_atom_vm hackynavi_hdmi_link hackynavi_edid hackynavi_edid_acquire hackynavi_otg hackynavi_vpg hackynavi_avi hackynavi_hdmi_stream
                  hackynavi_memory_layout hackynavi_gpu_vm hackynavi_vram_allocator hackynavi_vram_transfer
                  hackynavi_vram_reservations hackynavi_boot_display hackynavi_boot_display_stop hackynavi_bootstrap_quiesce
                  hackynavi_mode1_reset hackynavi_nbio
@@ -300,7 +317,7 @@ if(HACKYNAVI_SANITIZERS)
   endforeach()
   if(BUILD_TESTING)
     foreach(target rom-tests discovery-tests device-discovery-tests ip-layout-tests memory-layout-tests
-                   gfx-compute-tests atom-vm-tests hdmi-link-tests edid-tests edid-acquire-tests otg-tests
+                   gfx-compute-tests atom-vm-tests hdmi-link-tests edid-tests edid-acquire-tests otg-tests vpg-tests avi-tests hdmi-stream-tests
                    gpu-vm-tests vram-allocator-tests vram-reservations-tests boot-display-tests boot-display-stop-tests bootstrap-quiesce-tests
                    mode1-reset-tests nbio-tests
                    sdma-queue-tests psp-tests sdma-firmware-tests psp-ring-tests gfx-firmware-tests dp-aux-tests

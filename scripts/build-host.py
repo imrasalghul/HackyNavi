@@ -38,6 +38,9 @@ def main():
              "-fno-exceptions", "-fno-rtti", "-I", str(ROOT / "include")]
     suffix = ".exe" if os.name == "nt" else ""
     targets = (
+        ("hdmi-stream-tests", ["src/discovery.cpp", "src/otg.cpp", "src/vpg.cpp", "src/avi.cpp", "src/hdmi_stream.cpp", "tests/hdmi_stream_tests.cpp"]),
+        ("avi-tests", ["src/avi.cpp", "tests/avi_tests.cpp"]),
+        ("vpg-tests", ["src/discovery.cpp", "src/vpg.cpp", "tests/vpg_tests.cpp"]),
         ("otg-tests", ["src/discovery.cpp", "src/otg.cpp", "tests/otg_tests.cpp"]),
         ("gfx-compute-tests", ["src/gfx_compute.cpp", "tests/gfx_compute_tests.cpp"]),
         ("atom-vm-tests", ["src/atom_vm.cpp", "tests/atom_vm_tests.cpp"]),
@@ -123,7 +126,7 @@ def main():
         subprocess.run(command + flags + [str(ROOT / source) for source in sources] + [
                        "-o", str(output / (name + suffix))], check=True, env=env)
     for name in ("rom-tests", "discovery-tests", "device-discovery-tests", "ip-layout-tests",
-                 "gfx-compute-tests", "atom-vm-tests", "hdmi-link-tests", "edid-tests", "edid-acquire-tests", "otg-tests",
+                 "gfx-compute-tests", "atom-vm-tests", "hdmi-link-tests", "edid-tests", "edid-acquire-tests", "otg-tests", "vpg-tests", "avi-tests", "hdmi-stream-tests",
                  "memory-layout-tests", "gpu-vm-tests", "vram-allocator-tests", "vram-transfer-tests", "gart-tests",
                  "vram-reservations-tests", "boot-display-tests", "boot-display-stop-tests", "bootstrap-quiesce-tests",
                  "mode1-reset-tests", "nbio-tests",

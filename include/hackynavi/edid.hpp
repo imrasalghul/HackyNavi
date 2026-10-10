@@ -19,6 +19,7 @@ struct Monitor {
     uint32_t serial;
     uint8_t version,revision,blocks;
     bool hdmi,scdc,scrambleLowRates,ycbcr444,deepColor444,frlCapable;
+    bool rgbQuantizationSelectable,yccQuantizationSelectable;
     uint8_t deepColorMask; // Bits 0/1/2: 10/12/16 bits per component.
     // Zero means unspecified, never permission to assume 600MHz.
     uint32_t maxTmdsCharacterClockKHz;

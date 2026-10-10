@@ -39,6 +39,14 @@ SOFTWARE.
 
 ## Linux AMD GPUVM, memory and engine protocols
 
+`src/hdmi_stream.cpp` adapts HDMI packet scheduling and FIFO sequencing from
+`dcn30_dio_stream_encoder.c` and `dcn32_dio_stream_encoder.c` at the pinned
+Linux revision, retaining AMD's MIT notice.
+
+`src/vpg.cpp` adapts the DCN3.2 packet-memory sequence from AMD's
+`display/dc/dcn30/dcn30_vpg.c` and generated register definitions at the Linux
+revision below. It retains the original AMD MIT notice.
+
 `src/gpu_vm.cpp` adapts GMC11 page-table flag definitions and
 translate-further rules from AMD's `amdgpu_vm.h` and `gmc_v11_0.c` in
 [Linux revision 3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0](https://github.com/torvalds/linux/tree/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/drivers/gpu/drm/amd/amdgpu).

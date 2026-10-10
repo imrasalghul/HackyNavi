@@ -71,6 +71,7 @@ public:
     Phase phase() const { return phase_; }
     const dmcub::Route& route() const { return route_; }
     uint8_t laneCount() const { return lanes_; }
+    uint8_t frontendIndex() const { return frontend_; }
     bool needsRecovery() const { return phase_==Phase::Faulted; }
     // CPU state only, after independently verified reset/power loss and user withdrawal.
     void clearAfterVerifiedReset();

@@ -72,6 +72,7 @@ public:
     // Bookkeeping only, for the native owner's independently verified reset.
     void clearAfterVerifiedReset();
 private:
+    Controller(const Controller&)=delete;Controller& operator=(const Controller&)=delete;
     Status finish(Status,Result&);
     Status read(uint8_t,Register,uint32_t&,Result&);
     Status update(Register,uint32_t mask,uint32_t value,Result&);

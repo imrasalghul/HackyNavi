@@ -26,6 +26,7 @@ bool HackyNaviDisplayController::init() {
     firmwareLayout_ = dmcubfw::Layout{}; inboxLayout_ = dmcub::Layout{};
     inboxResult_ = dmcub::Result{}; auxLayout_ = dpaux::Layout{}; ddcLayout_ = hdmiddc::Layout{};
     dioLayout_ = dio::Layout{}; linkResult_ = dio::Result{};
+    streamLayout_ = hdmistream::Layout{};
     for (uint8_t i = 0; i < kMaxDisplayPaths; ++i) {
         routes_[i] = dmcub::Route{}; routeValid_[i] = false; clearLinkMetadata(i);
     }
@@ -73,7 +74,8 @@ IOReturn HackyNaviDisplayController::initialize(HackyNaviFirmwareController* fir
         dmcub::buildLayout(discovery, discoveryBytes, gart_->registerBytes_, inboxLayout_) != dmcub::Status::Ok ||
         dpaux::buildLayout(discovery, discoveryBytes, gart_->registerBytes_, auxLayout_) != dpaux::Status::Ok ||
         hdmiddc::buildLayout(discovery, discoveryBytes, gart_->registerBytes_, ddcLayout_) != hdmiddc::Status::Ok ||
-        dio::buildLayout(discovery, discoveryBytes, gart_->registerBytes_, dioLayout_) != dio::Status::Ok)
+        dio::buildLayout(discovery, discoveryBytes, gart_->registerBytes_, dioLayout_) != dio::Status::Ok ||
+        hdmistream::buildLayout(discovery, discoveryBytes, gart_->registerBytes_, streamLayout_) != hdmistream::Status::Ok)
         return finish(kIOReturnUnsupported);
     paths_ = display.pathCount;
     for (uint8_t i = 0; i < paths_; ++i) {
@@ -169,6 +171,7 @@ bool HackyNaviDisplayController::validPath(uint8_t path, uint8_t connector) cons
 void HackyNaviDisplayController::clearLinkMetadata(uint8_t path) {
     linkKinds_[path] = LinkKind::None;
     hdmiClocks_[path] = hdmiddc::Clock{}; hdmiScdc_[path] = false;
+    hdmiEncoding_[path] = hdmitmds::Encoding::Rgb; streamPipe_[path] = 0xff;
 }
 bool HackyNaviDisplayController::route(uint8_t path, dmcub::Route& out) {
     out = dmcub::Route{}; IOLockLock(lock_);
@@ -189,11 +192,18 @@ IOReturn HackyNaviDisplayController::inboxStatus(dmcub::Status status) {
 IOReturn HackyNaviDisplayController::pixelClock(uint8_t path, const dmcub::PixelClock& clock,
     const dmcub::PollOptions& poll) {
     const auto result = beginPath(path); if (result != kIOReturnSuccess) return result;
+    // Until the modeset owner tracks shared PLL leases, do not retune a clock
+    // under any prepared/running stream, including a different connector.
+    for (uint8_t i = 0; i < paths_; ++i)
+        if (streams_[i].requiresHardwareRetirement()) return finish(kIOReturnBusy);
     return finish(inboxStatus(inbox_.pixelClock(routes_[path], clock, poll, inboxResult_)));
 }
 IOReturn HackyNaviDisplayController::setupEncoder(uint8_t path, const dmcub::Encoder& encoder,
     const dmcub::PollOptions& poll) {
     const auto result = beginPath(path); if (result != kIOReturnSuccess) return result;
+    for (uint8_t i = 0; i < paths_; ++i)
+        if (streams_[i].requiresHardwareRetirement() && links_[i].frontendIndex() == encoder.engine)
+            return finish(kIOReturnBusy);
     return finish(inboxStatus(inbox_.setupEncoder(routes_[path], encoder, poll, inboxResult_)));
 }
 IOReturn HackyNaviDisplayController::transferAux(uint8_t path, const dpaux::Request* requests,
@@ -330,6 +340,7 @@ IOReturn HackyNaviDisplayController::enableHdmi(uint8_t path, uint8_t frontend,
         // Clock is stored only after the real engine accepted it. It is reused
         // for teardown so no unverified reference clock is invented at stop.
         hdmiClocks_[path] = clock; hdmiScdc_[path] = config.sink.scdc;
+        hdmiEncoding_[path] = config.encoding;
         linkKinds_[path] = LinkKind::Hdmi;
         const auto prepared = links_[path].prepare(dioLayout_, linkIo, routes_[path], frontend, 4, linkResult_);
         out.sourceStatus = prepared; out.source = linkResult_;
@@ -380,6 +391,11 @@ IOReturn HackyNaviDisplayController::enableHdmi(uint8_t path, uint8_t frontend,
 IOReturn HackyNaviDisplayController::disableHdmiLocked(uint8_t path, const dmcub::PollOptions& poll,
     hdmitmds::HardwareResult& out) {
     out = hdmitmds::HardwareResult{};
+    hdmistream::Result streamResult{};
+    if (stopHdmiStreamLocked(path, poll, streamResult) != kIOReturnSuccess) {
+        out.link.status = hdmitmds::Status::SourceFailed; out.link.recoveryRequired = true;
+        return fault();
+    }
     if (links_[path].phase() == dio::Phase::Closed) {
         clearLinkMetadata(path); out.link.sourceDisabled = true; out.link.stage = hdmitmds::Stage::Complete;
         return kIOReturnSuccess;
@@ -441,6 +457,60 @@ IOReturn HackyNaviDisplayController::disableHdmi(uint8_t path, const dmcub::Poll
     const auto retired = disableHdmiLocked(path, poll, out);
     return finish(retired != kIOReturnSuccess ? retired :
         out.link.status == hdmitmds::Status::Ok ? kIOReturnSuccess : kIOReturnIOError);
+}
+IOReturn HackyNaviDisplayController::prepareHdmiStream(uint8_t path, uint8_t pipe,
+    const avi::Config& aviConfig, const edid::Monitor& monitor, const dmcub::PollOptions& poll,
+    hdmistream::Result& out) {
+    out = hdmistream::Result{}; out.status = hdmistream::Status::InvalidArgument;
+    if (pipe >= otg::kPipeCount || !validPoll(poll)) return kIOReturnBadArgument;
+    const auto begun = beginPath(path, 0x0c); if (begun != kIOReturnSuccess) return begun;
+    if (linkKinds_[path] != LinkKind::Hdmi || links_[path].phase() != dio::Phase::Enabled)
+        return finish(kIOReturnNotReady);
+    if (streams_[path].phase() != hdmistream::Phase::Closed && streams_[path].phase() != hdmistream::Phase::Stopped)
+        return finish(kIOReturnBusy);
+    const auto encoding = aviConfig.encoding == avi::Encoding::Rgb ? hdmitmds::Encoding::Rgb :
+        aviConfig.encoding == avi::Encoding::YCbCr444 ? hdmitmds::Encoding::YCbCr444 : hdmitmds::Encoding::YCbCr420;
+    if (encoding != hdmiEncoding_[path]) return finish(kIOReturnBadArgument);
+    for (uint8_t i = 0; i < paths_; ++i) if (i != path && streams_[i].requiresHardwareRetirement() && streamPipe_[i] == pipe)
+        return finish(kIOReturnBusy);
+    const hdmistream::Config config = {links_[path].frontendIndex(), routes_[path].phy, pipe, aviConfig};
+    const vpg::Io io = {this, read32, write32, delayUs}; const vpg::Poll bounds = {poll.maxPolls, poll.delayUs};
+    const auto status = streams_[path].prepare(streamLayout_, io, config, monitor, bounds, out);
+    if (streams_[path].requiresHardwareRetirement()) streamPipe_[path] = pipe;
+    if (status == hdmistream::Status::Ok) return finish(kIOReturnSuccess);
+    return finish(streams_[path].phase() == hdmistream::Phase::Faulted ? fault() : kIOReturnIOError);
+}
+IOReturn HackyNaviDisplayController::startHdmiStream(uint8_t path, const dmcub::PollOptions& poll,
+    hdmistream::Result& out) {
+    out = hdmistream::Result{}; out.status = hdmistream::Status::InvalidArgument;
+    if (!validPoll(poll)) return kIOReturnBadArgument;
+    const auto begun = beginPath(path, 0x0c); if (begun != kIOReturnSuccess) return begun;
+    if (linkKinds_[path] != LinkKind::Hdmi || links_[path].phase() != dio::Phase::Enabled)
+        return finish(kIOReturnNotReady);
+    const vpg::Poll bounds = {poll.maxPolls, poll.delayUs};
+    const auto status = streams_[path].start(bounds, out);
+    if (status == hdmistream::Status::Ok) return finish(kIOReturnSuccess);
+    return finish(streams_[path].phase() == hdmistream::Phase::Faulted ? fault() : kIOReturnIOError);
+}
+IOReturn HackyNaviDisplayController::stopHdmiStreamLocked(uint8_t path, const dmcub::PollOptions& poll,
+    hdmistream::Result& out) {
+    out = hdmistream::Result{};
+    if (!streams_[path].requiresHardwareRetirement()) return kIOReturnSuccess;
+    const vpg::Poll bounds = {poll.maxPolls, poll.delayUs};
+    const auto status = streams_[path].stop(bounds, out);
+    if (status != hdmistream::Status::Ok) {
+        IOLog("HackyNavi: HDMI stream stop path=%u status=%u register=0x%x packet=%s; owners retained\n",
+            unsigned(path), unsigned(status), out.lastRegister, vpg::statusString(out.packet.status));
+        return fault();
+    }
+    streamPipe_[path] = 0xff; return kIOReturnSuccess;
+}
+IOReturn HackyNaviDisplayController::stopHdmiStream(uint8_t path, const dmcub::PollOptions& poll,
+    hdmistream::Result& out) {
+    out = hdmistream::Result{}; out.status = hdmistream::Status::InvalidArgument;
+    if (!validPoll(poll)) return kIOReturnBadArgument;
+    const auto begun = beginPath(path, 0x0c); if (begun != kIOReturnSuccess) return begun;
+    return finish(stopHdmiStreamLocked(path, poll, out));
 }
 IOReturn HackyNaviDisplayController::hdmiOperation(uint8_t path, const hdmiddc::Clock& clock,
     const hdmiddc::Message* messages, size_t count, bool edid, uint8_t block, hdmiddc::Result& out) {
@@ -531,6 +601,8 @@ IOReturn HackyNaviDisplayController::readEdid(uint8_t path, const hdmiddc::Clock
     IOFree(bytes, capacity); return finish(result);
 }
 IOReturn HackyNaviDisplayController::releaseLeaseLocked() {
+    for (uint8_t path = 0; path < paths_; ++path)
+        if (streams_[path].requiresHardwareRetirement()) return kIOReturnBusy;
     if (lease_) {
         if (gart_->displayOwner_ != this) return kIOReturnInternalError;
         gart_->displayOwner_ = nullptr; lease_ = false;
@@ -574,6 +646,7 @@ IOReturn HackyNaviDisplayController::releaseAfterDeviceReset() {
     lockOwners();
     inbox_.clearAfterVerifiedReset(); aux_.clearAfterVerifiedReset(); ddc_.clearAfterVerifiedReset();
     for (uint8_t path = 0; path < paths_; ++path) {
+        streams_[path].clearAfterVerifiedReset();
         links_[path].clearAfterVerifiedReset(); clearLinkMetadata(path);
     }
     const auto result = releaseLeaseLocked(); if (result != kIOReturnSuccess) return finish(result);

@@ -287,6 +287,47 @@ Metal API → AIR/SPIR-V frontend → RADV/NIR/ACO → Darwin winsys
 
 Display and IOSurface integration also require their own memory-sharing and synchronization work; a headless rendering result does not establish desktop acceleration.
 
+### Output timing controller
+
+`vpg.hpp` / `.cpp` implement DCN3.2 generic packet SRAM access for the five
+legacy encoder instances and fifteen packet slots. The owner must hold the
+associated packet scheduler disabled and establish the shared AFMT clock.
+The transport checks the actual clock state, waits for VPG locks and pending
+updates, wakes SRAM, writes the header and 32 payload bytes through the
+auto-increment window, submits an immediate update and observes completion.
+SRAM data is never read back through that auto-increment port. A failed write
+retains the instance until independent retirement. Closing restores the saved
+SRAM sleep controls after checking pending updates. `avi.cpp` constructs version-2 RGB/444 AVI payloads and checks range selection
+against parsed CTA Video Capability Data Block bits. Conflicting duplicate
+capability blocks are rejected. `hdmi_stream.cpp` connects this transport to AVI scheduling and the DIG FIFO:
+prepare validates the live HDMI backend/frontend route, excludes other packet
+senders, enables AFMT, uploads AVI and selects line 2. Start checks live OTG
+master/clock status, performs the FIFO reset handshake, enables transmission,
+and requires two frame advances without FIFO errors before clearing AVMUTE.
+Stop asserts AVMUTE, disables FIFO and AVI, closes VPG and restores clock/DB
+settings. Ambiguous failures retain ownership. The kernel display owner now binds these operations to its saved HDMI link
+frontend and ROM-selected PHY, verifies matching pixel encoding, reserves
+the OTG across paths, and retires the stream before PHY disable. Its display
+lease cannot be released while a stream retains hardware. Shared PLL changes
+are blocked while streams exist until a dedicated PLL lease manager is added.
+The scanout pipeline and PCI-service activation remain unfinished.
+
+`otg.hpp` / `.cpp` implement the DCN3.2 OTG/VTG/ODM timing sequence for
+progressive single-pipe RGB. Register addresses are derived from validated DMU
+discovery, including distinct OTG, VTG and ODM strides. Admission rejects live
+timing generators, foreign locks/interrupts and another enabled OTG consuming
+the selected OPP. Configuration programs timing, blanking, sync polarity and
+caller-supplied global-sync parameters. Enable requires both clock status bits,
+current master enable and an advancing hardware frame counter; shutdown
+disconnects ODM inputs and verifies master-off and idle before clearing clock
+controls. Any ambiguous write preserves retirement responsibility.
+
+The timing controller does not establish a scanout surface or calculate display
+bandwidth. Its owning modeset path still needs pixel PLL/DCCG, HUBP/DPP/MPC/OPP,
+stream packets and native framebuffer integration. Tests exercise geometry,
+all four pipe routes, each admission guard, bounded timeouts and transport
+failure at every I/O position. These host tests do not establish visible output.
+
 ### Hardware access boundary
 
 Linux helpers named as reads are not necessarily free of register writes. In the pinned Linux source, `amdgpu_device_vram_access(..., false)` can fall back to writes of `MM_INDEX` / `MM_INDEX_HI`; its aperture path can invalidate HDP. The active acquisition path therefore belongs to the opt-in PCI service, not the passive observer. It uses assigned BAR resources and documented bootstrap registers, not broad register scans. Device power/reset/removal behavior remains a runtime validation requirement.
