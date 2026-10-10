@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "repository": "https://gitlab.com/kernel-firmware/linux-firmware.git",
+  "commit": "afabaf773c4c2e2c841429933a6a084a5af4d14d",
+  "license": {
+    "path": "LICENSES/LICENSE.amdgpu",
+    "bytes": 2938,
+    "sha256": "572872598565dc3513470de971a32bf9db301f47afeef3636345eadae33b2eee"
+  },
+  "files": [
+    {
+      "id": "PspSos",
+      "path": "amdgpu/psp_13_0_0_sos.bin",
+      "bytes": 272400,
+      "sha256": "4a51299f6d0a15bbba9694419f7891e6accc01dbd2dd67c06add7bfd75a45ac6"
+    },
+    {
+      "id": "Sdma",
+      "path": "amdgpu/sdma_6_0_0.bin",
+      "bytes": 34560,
+      "sha256": "82cd01a24171af12de6c7ac4ee7471aa2dfcf51f9677e7bae9cd4c75e07761ee"
+    },
+    {
+      "id": "Smu",
+      "path": "amdgpu/smu_13_0_0.bin",
+      "bytes": 292452,
+      "sha256": "3551e1ef1f0cf542d1a728bdff123142e7cf86b550974d229668b01804c3992d"
+    },
+    {
+      "id": "GcPfp",
+      "path": "amdgpu/gc_11_0_0_pfp.bin",
+      "bytes": 232096,
+      "sha256": "d57b34a2bd45c1c944834df16655612f5b3e34f59649cab138cc3095891f61b3"
+    },
+    {
+      "id": "GcMe",
+      "path": "amdgpu/gc_11_0_0_me.bin",
+      "bytes": 315120,
+      "sha256": "f274dc44529d749b1a9fa06276b8f32a2968a16ae801896bd11c53b234cc8e1b"
+    },
+    {
+      "id": "GcMec",
+      "path": "amdgpu/gc_11_0_0_mec.bin",
+      "bytes": 406528,
+      "sha256": "da5903d0d11566f4c808a8b9e8f7abba0a86959610e5f598d508ebd15d1d3ee8"
+    },
+    {
+      "id": "GcImu",
+      "path": "amdgpu/gc_11_0_0_imu.bin",
+      "bytes": 132352,
+      "sha256": "b4f8fc056b45709a6abf48e7885fb1b4ab8d3cc092cbfa2c554a78564a6403bc"
+    },
+    {
+      "id": "GcRlc",
+      "path": "amdgpu/gc_11_0_0_rlc.bin",
+      "bytes": 185376,
+      "sha256": "dabd49039772d02f5fd5e48dc21d35ad52a6b1283b470dabca86ca159c4c7c8e"
+    },
+    {
+      "id": "Dmcub",
+      "path": "amdgpu/dcn_3_2_0_dmcub.bin",
+      "bytes": 284432,
+      "sha256": "6c7f67c12c531e812cf97d8d4188531fad6c5e260e75293b270b39b46793c053"
+    }
+  ]
+}

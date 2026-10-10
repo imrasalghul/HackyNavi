@@ -1,0 +1,9 @@
+.research/
+.tools/
+build/
+reports/
+*.rom
+*.ROM
+__pycache__/
+*.pyc
+.DS_Store

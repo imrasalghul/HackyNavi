@@ -1,0 +1,73 @@
+name: Build and protocol checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parsers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Configure with address and undefined behavior sanitizers
+        # Fault-injection fixtures repeatedly transfer real-sized firmware.
+        # Keep symbols and sanitizer checks without the very slow -O0 loops.
+        run: cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g" -DHACKYNAVI_SANITIZERS=ON
+      - name: Build portable modules and tests
+        timeout-minutes: 5
+        run: cmake --build build/ci --parallel 2
+      - name: Run protocol and parser tests once
+        timeout-minutes: 9
+        run: ctest --test-dir build/ci --parallel 2 --timeout 300 --no-tests=error --output-on-failure
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+        timeout-minutes: 2
+        env:
+          HACKYNAVI_DISCOVERY_TOOL: ${{ github.workspace }}/build/ci/hackynavi-discovery
+
+  macos-build:
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    env:
+      # Included on this runner image; binds this job to the macOS 15.5 SDK.
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Fetch hash-pinned AMD firmware and its license
+        timeout-minutes: 8
+        run: python3 scripts/fetch-firmware.py
+      - name: Build and run host protocol and firmware integrity tests
+        timeout-minutes: 10
+        run: python3 scripts/build-host.py
+      - name: Compile unsigned x86_64 services against the selected Apple SDK
+        timeout-minutes: 7
+        run: |
+          xcodebuild -version
+          bash scripts/build-kext.sh
+          python3 scripts/inspect-kext.py build/macos/HackyNavi.kext --output build/macos/bundle-inspection.json
+      - name: Package build artifact
+        run: ditto -c -k --keepParent build/macos/HackyNavi.kext build/macos/HackyNavi-unsigned.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: HackyNavi-unsigned-x86_64
+          path: |
+            build/macos/HackyNavi-unsigned.zip
+            build/macos/bundle-inspection.json
+          if-no-files-found: error
+          retention-days: 7
+
+# A successful SDK compile is not a loading, firmware, display, or GPU execution test.
