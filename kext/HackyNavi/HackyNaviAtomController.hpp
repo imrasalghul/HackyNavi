@@ -22,17 +22,34 @@ public:
         bool tableExecuted, firmwareWaitSatisfied, scratchMarkerSet;
         bool deadlineExpired;
     };
+    enum class PreparationStep : uint8_t { Allocation, Binding, State, Provider,
+        RomCopy, Image, Atom, Firmware, Program, Parameters, Profile,
+        Workspace, Analysis, Complete };
+    struct PreparationObservation {
+        PreparationStep step;
+        IOReturn result;
+        uint32_t attempted,completed,subsystem,tableOffset,tableBytes,tableCrc32,scratchBase;
+        uint64_t romBytes;
+        hackynavi::Status imageStatus,atomStatus,firmwareStatus;
+        hackynavi::atomvm::Status programStatus,parameterStatus;
+        hackynavi::atomvm::Result analysis;
+        bool tableHeaderValid,tableCrcValid,analysisAttempted;
+    };
     // No hardware writes: binds exact ResetController provider/owner/BAR map,
     // copies its captured live ROM, validates the known Navi31 ASIC_Init profile
     // and creates CPU-only parameter/scratch/interpreter storage. May be called
     // after ResetController::prepare, before reset(), to preflight recovery.
+    // Reset's actual Access guard must span this factory's provider reads.
     static HackyNaviAtomController* withReset(HackyNaviResetController*,
-        IOPCIDevice*,IOService* openOwner,IOMemoryMap* assignedUncachedBar5,IOReturn&);
+        IOPCIDevice*,IOService* openOwner,IOMemoryMap* assignedUncachedBar5,IOReturn&,
+        PreparationObservation* observation=nullptr);
     // Requires reset protocol complete, independently restored PCI state and
     // transactions pending clear; BME must stay off. Executes real bytecode and
     // checks the firmware's hardware wait plus SCRATCH7 marker. The bytecode
     // writes that marker even after its wait counter expires, so it alone is
-    // insufficient. Success is not proof that old GPU memory references retired,
+    // insufficient. Requires Reset's actual retirement Access with PCI recovery
+    // entered; a normal operation cannot execute this command table.
+    // Success is not proof that old GPU memory references retired,
     // that new firmware/engines work, or that display/acceleration is ready.
     IOReturn initializeAfterMode1();
     // Bookkeeping only, gated by this exact reset owner's fresh hardware
@@ -49,6 +66,8 @@ protected:
     void free() override;
 private:
     IOReturn initialize(HackyNaviResetController*,IOPCIDevice*,IOService*,IOMemoryMap*);
+    void preparationStep(PreparationStep);
+    void preparationPassed();
     bool providerReady(bool busMasterOff) const;
     bool accessReady(uint32_t registerDword);
     bool deadlineReady();
@@ -74,6 +93,7 @@ private:
     hackynavi::atomvm::Program program_;
     hackynavi::atomvm::Result execution_;
     Observations observations_;
+    PreparationObservation preparation_;
     uint32_t subsystem_,scratch7Dword_,selector_;
     bool active_,hardwareHold_,selectorKnown_;
     State state_;

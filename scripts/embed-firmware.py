@@ -13,7 +13,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "firmware" / "manifest.json"
 MAX_RESOURCE_BYTES = 4 * 1024 * 1024
-RESOURCE_IDS = ("PspSos", "Sdma", "Smu", "GcPfp", "GcMe", "GcMec", "GcImu", "GcRlc", "Dmcub")
+RESOURCE_IDS = ("PspSos", "Sdma", "Smu", "GcPfp", "GcMe", "GcMec", "GcImu", "GcRlc", "Dmcub", "PspTa")
 
 
 def checked_resource(directory, item):

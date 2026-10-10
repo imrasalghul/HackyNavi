@@ -276,6 +276,55 @@ void failureCases() {
         else CHECK(state.phase()==d::Phase::Faulted);
     }
 }
+void splitRetirementContract() {
+    // The native split keeps runtime ownership until the actual stop protocol
+    // completes; a scope/deadline rejection must not silently retire that BO.
+    // This wrapper models the native callback admission boundary, not a GPU.
+    struct Access {
+        Device* device; size_t remaining; bool live;
+        bool admit() { if (!live || !remaining) { live=false; return false; } --remaining; return true; }
+        static bool read(void* c,uint32_t address,uint32_t& value) {
+            auto& s=*static_cast<Access*>(c); return s.admit() && Device::read(s.device,address,value);
+        }
+        static bool write(void* c,uint32_t address,uint32_t value) {
+            auto& s=*static_cast<Access*>(c); return s.admit() && Device::write(s.device,address,value);
+        }
+        static bool publish(void*) { CHECK(false); return false; }
+        static void delay(void* c,uint32_t us) { Device::delay(static_cast<Access*>(c)->device,us); }
+        d::Io io() { return {this,read,write,publish,delay}; }
+    };
+    Device completed; CHECK(completed.boot()==d::Status::Ok); completed.accesses.clear();
+    CHECK(d::stop(completed.io(),polls,completed.state,completed.result)==d::Status::Ok);
+    const size_t count=completed.accesses.size(); CHECK(count>0);
+    const auto mailbox=completed.state.mailboxGpuAddress();
+    CHECK(completed.result.stage==d::Stage::Complete && completed.result.firmwareMayBeLoaded);
+    CHECK(!completed.result.runtimeRetentionRequired && !completed.state.needsRuntimeRetention());
+    CHECK(!completed.state.needsStagingRetention() && mailbox==completed.mc+4096);
+    const auto pspCommands=completed.psp.received.size();
+    CHECK(d::stop(completed.io(),polls,completed.state,completed.result)==d::Status::InvalidState);
+    CHECK(completed.accesses.size()==count && completed.state.phase()==d::Phase::Stopped);
+    CHECK(completed.result.firmwareMayBeLoaded && !completed.result.runtimeRetentionRequired);
+    CHECK(completed.psp.received.size()==pspCommands && completed.state.mailboxGpuAddress()==mailbox);
+    for(size_t admitted=0;admitted<count;++admitted) {
+        Device s; CHECK(s.boot()==d::Status::Ok); s.accesses.clear();
+        const auto secure0=s.registers[reg(0x1ad)],secure1=s.registers[reg(0x1ae)];
+        const auto installed=s.psp.received.size();
+        Access access={&s,admitted,true};
+        CHECK(d::stop(access.io(),polls,s.state,s.result)!=d::Status::Ok);
+        CHECK(!access.live && s.accesses.size()==admitted && s.state.phase()==d::Phase::Faulted);
+        CHECK(s.state.needsRuntimeRetention() && s.result.runtimeRetentionRequired && s.result.firmwareMayBeLoaded);
+        CHECK(d::stop(access.io(),polls,s.state,s.result)==d::Status::ReadFailed);
+        CHECK(s.accesses.size()==admitted && s.state.needsRuntimeRetention());
+        // A new admitted observation must run the real reset/window readbacks;
+        // it cannot turn the earlier partial result into completion.
+        CHECK(d::stop(s.io(),polls,s.state,s.result)==d::Status::Ok);
+        CHECK(s.accesses.size()>admitted && s.state.phase()==d::Phase::Stopped);
+        CHECK(!s.state.needsRuntimeRetention() && s.result.firmwareMayBeLoaded);
+        CHECK(s.psp.received.size()==installed && s.registers[reg(0x1ad)]==secure0 && s.registers[reg(0x1ae)]==secure1);
+        const auto stopped=s.accesses.size();
+        CHECK(d::stop(s.io(),polls,s.state,s.result)==d::Status::InvalidState && s.accesses.size()==stopped);
+    }
+}
 void actual(const char* path,const char* romPath) {
     std::ifstream in(path,std::ios::binary); std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),{});
     d::Image image={}; CHECK(bytes.size()==284432 && d::parse(bytes.data(),bytes.size(),image)==d::Status::Ok);
@@ -298,6 +347,6 @@ void actual(const char* path,const char* romPath) {
 }
 }
 int main(int argc,char** argv) {
-    parsing(); normal(); failureCases(); inheritedCold(); if(argc>1)actual(argv[1],argc>2?argv[2]:nullptr);
+    parsing(); normal(); failureCases(); splitRetirementContract(); inheritedCold(); if(argc>1)actual(argv[1],argc>2?argv[2]:nullptr);
     std::cout<<checks<<" checks, "<<failures<<" failures\n"; return failures?1:0;
 }

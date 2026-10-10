@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Host-only register model; these tests perform no real GPU access.
-#include "hackynavi/cold_dma.hpp"
+#include "hackynavi/cold_dma_capture.hpp"
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -107,7 +107,7 @@ void power(){
         for(uint32_t reg:m.reads)for(size_t p=0;p<cd::kPipes;++p)if(mask&(1U<<p))
             CHECK(reg!=m.l.mallConfig[p] && reg!=m.l.mallStatus[p] && reg!=m.l.mallSubvp[p] && reg!=m.l.vmPageConfig[p]);}
     for(size_t p=0;p<cd::kPipes;++p){
-        for(uint32_t bad:{0x10000000U,0x40000000U,0x80000000U,0xd0000000U}){
+        for(uint32_t bad:{0x40000000U,0x80000000U,0xd0000000U}){
             Model m;m.regs[m.l.power[p]]=bad;CHECK(m.run(r)==cd::Status::PowerUnavailable);}
         for(uint32_t bad:{0U,1U,0x101U}){Model m;m.off(1U<<p);m.regs[m.l.powerConfig[p]]=bad;
             CHECK(m.run(r)==cd::Status::PowerUnavailable);}
@@ -123,8 +123,92 @@ void power(){
     Model off;off.off(15);CHECK(off.run(r)==cd::Status::Ok && r.reads==111);
     for(size_t at=1;at<=off.reads.size();++at){Model m;m.off(15);m.failAt=at;CHECK(m.run(r)==cd::Status::ReadFailed && r.reads==at);}
 }
+void currentPowerStates(){
+    cd::Result r={};
+    for(uint32_t on:{0u,0x10000000u})for(uint32_t config:{0u,1u})for(uint32_t off:{0x80000000u,0x90000000u}) {
+        auto prepare=[&](Model& m,unsigned offMask){
+            for(unsigned p=0;p<cd::kPipes;++p){m.regs[m.l.power[p]]=on;m.regs[m.l.powerConfig[p]]=config;}
+            m.off(offMask);
+            for(unsigned p=0;p<cd::kPipes;++p)if(offMask&(1U<<p))m.regs[m.l.power[p]]=off;
+        };
+        for(unsigned mask=0;mask<16;++mask){Model m;prepare(m,mask);
+            CHECK(m.run(r)==cd::Status::Ok && r.poweredOffMask==mask);
+            for(uint32_t reg:m.reads)for(unsigned p=0;p<cd::kPipes;++p)if(mask&(1U<<p))
+                CHECK(reg!=m.l.mallConfig[p] && reg!=m.l.mallStatus[p] && reg!=m.l.mallSubvp[p] && reg!=m.l.vmPageConfig[p]);
+        }
+        // Every callback failure/all-ones aborts in each accepted ON/OFF
+        // encoding; no reserved bits or request conflicts are masked away.
+        for(unsigned mask:{0u,15u}){
+            Model base;prepare(base,mask);CHECK(base.run(r)==cd::Status::Ok);
+            for(size_t at=1;at<=base.reads.size();++at)for(bool ones:{false,true}){
+                Model m;prepare(m,mask);if(ones)m.unavailableAt=at;else m.failAt=at;
+                CHECK(m.run(r)==(ones?cd::Status::DeviceUnavailable:cd::Status::ReadFailed) && m.reads.size()==at);
+            }
+            for(unsigned p=0;p<cd::kPipes;++p)for(unsigned bit=0;bit<32;++bit){
+                Model m;prepare(m,mask);m.regs[m.l.power[p]]^=1U<<bit;
+                CHECK(m.run(r)==(bit==28?cd::Status::Ok:cd::Status::PowerUnavailable));
+                Model c;prepare(c,mask);c.regs[c.l.powerConfig[p]]^=1U<<bit;
+                CHECK(c.run(r)==(!mask&&bit==0?cd::Status::Ok:cd::Status::PowerUnavailable));
+            }
+            for(unsigned p=0;p<cd::kPipes;++p){bool seenStatus=false,seenConfig=false;
+                for(size_t at=1;at<=base.reads.size();++at){const auto reg=base.reads[at-1];
+                    const bool state=reg==base.l.power[p],cfg=reg==base.l.powerConfig[p];
+                    if(!state&&!cfg)continue;
+                    bool& seen=state?seenStatus:seenConfig;if(!seen){seen=true;continue;}
+                    Model m;prepare(m,mask);m.changeAt=at;m.changeReg=reg;
+                    m.changeValue=m.regs[reg]^(state?0x10000000U:1U);
+                    const auto status=m.run(r);
+                    CHECK(status==cd::Status::PowerUnavailable || status==cd::Status::UnstableSnapshot);
+                    CHECK(m.reads.size()<=at+2 && !r.poweredOffMask);
+                }
+            }
+        }
+        // With the newly accepted desired-bit ON state, every actual MALL
+        // drain/client predicate still runs and prevents cold DMA admission.
+        for(unsigned p=0;p<cd::kPipes;++p){Model m;prepare(m,0);m.regs[m.l.mallStatus[p]]=0;
+            CHECK(m.run(r)==cd::Status::MallNotStopped);}
+    }
 }
-int main(int argc,char** argv){layouts();protocol();power();
+void readJournalEvidence(){
+    const auto verify=[](const cd::ReadCapture& j,const Model& m,size_t fail,size_t ones) {
+        CHECK(j.attempted==m.reads.size()&&j.recorded==j.attempted&&!j.truncated);
+        for(size_t i=0;i<j.recorded;++i){const uint32_t bit=1U<<(i%32);
+            CHECK(j.entries[i].byteOffset==m.reads[i]);
+            CHECK(j.entries[i].returnedValue==(i+1==ones?UINT32_MAX:m.regs.at(m.reads[i])));
+            CHECK(bool(j.callbackSucceeded[i/32]&bit)==(i+1!=fail));
+            CHECK(bool(j.nonAllOnes[i/32]&bit)==(i+1!=fail&&i+1!=ones));}
+        for(size_t i=j.recorded;i<cd::ReadCapture::capacity;++i)
+            CHECK(!j.entries[i].byteOffset&&!j.entries[i].returnedValue&&
+                !(j.callbackSucceeded[i/32]&(1U<<(i%32)))&&!(j.nonAllOnes[i/32]&(1U<<(i%32))));
+    };
+    for(unsigned mask:{0u,5u,15u}) {
+        Model base,plain;base.off(mask);plain.off(mask);cd::Result a{},b{};cd::ReadCapture j{};
+        CHECK(plain.run(a)==cd::Status::Ok);
+        CHECK(cd::checkStoppedRecorded(base.l,{&base,Model::read},b,&j)==a.status);
+        CHECK(base.reads==plain.reads&&a.poweredOffMask==b.poweredOffMask);verify(j,base,0,0);
+        if(!mask)CHECK(j.recorded==239);
+        for(size_t at=1;at<=base.reads.size();++at)for(bool ones:{false,true}){
+            Model original,traced;original.off(mask);traced.off(mask);
+            if(ones)original.unavailableAt=traced.unavailableAt=at;else original.failAt=traced.failAt=at;
+            const auto status=original.run(a);
+            CHECK(cd::checkStoppedRecorded(traced.l,{&traced,Model::read},b,&j)==status);
+            CHECK(original.reads==traced.reads&&traced.reads.size()==at);
+            CHECK(a.reads==b.reads&&a.lastRegister==b.lastRegister&&a.lastValue==b.lastValue&&
+                a.mask==b.mask&&a.expected==b.expected&&a.pass==b.pass&&a.pipe==b.pipe);
+            verify(j,traced,ones?0:at,ones?at:0);
+        }
+    }
+    {Model m;cd::Result r{};cd::ReadCapture j{};m.regs[m.l.wb[15]]=1;
+        CHECK(cd::checkStoppedRecorded(m.l,{&m,Model::read},r,&j)==cd::Status::WritebackNotStopped);
+        CHECK(j.entries[j.recorded-1].byteOffset==m.l.wb[15]&&j.entries[j.recorded-1].returnedValue==1);
+        verify(j,m,0,0);}
+    {Model m;cd::Result r{};cd::ReadCapture j{};j.attempted=99;
+        CHECK(cd::checkStoppedRecorded(m.l,{nullptr,nullptr},r,&j)==cd::Status::InvalidArgument&&!j.attempted);
+        CHECK(cd::checkStoppedRecorded(m.l,{&m,Model::read},r,nullptr)==cd::Status::Ok);}
+}
+
+}
+int main(int argc,char** argv){layouts();protocol();power();currentPowerStates();readJournalEvidence();
     if(argc>1){std::ifstream f(argv[1],std::ios::binary);std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)),{});
         cd::Layout l={};CHECK(!b.empty() && cd::buildLayout(b.data(),b.size(),0x100000,l)==cd::Status::Ok);
         CHECK(l.ih[0]==0x4588 && l.sos==0x58244 && l.mall==(0x34c0+0x523)*4);}

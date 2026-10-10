@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "HackyNaviGraphicsQueue.hpp"
+#include "HackyNaviVMContext.hpp"
+#include "HackyNaviVMCompletion.hpp"
 #include <IOKit/IOLib.h>
 
 #if !defined(__x86_64__)
@@ -19,7 +21,8 @@ bool validPoll(const gfxqueue::PollOptions& p) {
 bool HackyNaviGraphicsQueue::init() {
     lock_ = nullptr; firmware_ = nullptr; gart_ = nullptr;
     workspace_ = dataCpu_ = nullptr; dataBytes_ = dataGpu_ = 0;
-    storageLease_ = hardwareHold_ = false; state_ = State::Empty;
+    storageLease_ = hardwareHold_ = neverStartedRetirement_ = false; state_ = State::Empty;
+    rawIndirectUsed_ = isolatedClaimed_ = false;
     clearState_ = VramAllocation{}; initResult_ = gfxinit::Result{};
     shader_ = VramAllocation{}; shaderGpu_ = 0; shaderReady_ = false;
     computeStatus_ = gfxcompute::Status::InvalidArgument;
@@ -40,6 +43,7 @@ HackyNaviGraphicsQueue* HackyNaviGraphicsQueue::withFirmware(
 }
 IOReturn HackyNaviGraphicsQueue::initialize(HackyNaviFirmwareController* firmware) {
     if (!firmware || !firmware->gart_) return kIOReturnBadArgument;
+    if (!firmware->gart_->normalAccessReady()) return kIOReturnOffline;
     firmware_ = firmware; firmware_->retain();
     gart_ = firmware_->gart_; gart_->retain();
     workspace_ = static_cast<uint8_t*>(IOMalloc(kWorkspaceBytes));
@@ -73,7 +77,7 @@ IOReturn HackyNaviGraphicsQueue::initialize(HackyNaviFirmwareController* firmwar
         reinterpret_cast<volatile uint32_t*>(wbCpu), reinterpret_cast<volatile uint64_t*>(wbCpu + 8),
         reinterpret_cast<volatile uint32_t*>(wbCpu + 16)};
     state_ = State::Allocated;
-    return finish(kIOReturnSuccess);
+    return finish(gart_->normalAccessReady()?kIOReturnSuccess:kIOReturnOffline);
 }
 void HackyNaviGraphicsQueue::lockOwners() {
     IOLockLock(lock_); IOLockLock(firmware_->lock_); IOLockLock(gart_->lock_);
@@ -84,10 +88,21 @@ IOReturn HackyNaviGraphicsQueue::finish(IOReturn result) {
     return result;
 }
 bool HackyNaviGraphicsQueue::providerReady() const {
-    return storageLease_ && gart_->queueOwner_ == this && gart_->firmwareOwner_ == firmware_ &&
+    return gart_->accessReady() && storageLease_ && gart_->queueOwner_ == this && gart_->firmwareOwner_ == firmware_ &&
         gart_->firmwareReady_ && gart_->state_ == HackyNaviGARTController::State::BothEnabled &&
         firmware_->state_ == HackyNaviFirmwareController::State::FirmwareLoaded &&
         firmware_->graphics_.autoloadComplete() && firmware_->smu_.awake() && firmware_->providerReady();
+}
+bool HackyNaviGraphicsQueue::neverStartedRetirementReadyLocked() const {
+    if (!hardwareHold_ || !storageLease_ || !shaderReady_ || rawIndirectUsed_ || isolatedClaimed_ ||
+        !queue_.neverPublished() || !initState_.prepared() || !initState_.needsClearStateRetention() ||
+        gart_->queueOwner_ != this || gart_->vmRetirementActive_ ||
+        gart_->vmRetirementFailure_ != kIOReturnSuccess || gart_->hasVmOwners()) return false;
+    const auto owned = initState_.clearStateAllocation();
+    VramRange range{};
+    return owned.owner == &gart_->allocator_ && owned.owner == clearState_.handle.owner &&
+        owned.serial == clearState_.handle.serial && owned.slot == clearState_.handle.slot &&
+        gart_->allocator_.lookup(owned, range) == VramAllocatorStatus::Ok && range.bytes >= 4096;
 }
 void HackyNaviGraphicsQueue::holdHardware() {
     if (!hardwareHold_) { retain(); hardwareHold_ = true; }
@@ -109,21 +124,23 @@ bool HackyNaviGraphicsQueue::write32(void* context, uint32_t offset, uint32_t va
 }
 bool HackyNaviGraphicsQueue::publish(void* context) {
     auto* self = static_cast<HackyNaviGraphicsQueue*>(context);
-    return self->gart_->storage_.synchronizeForDevice(Region::Data) == kIOReturnSuccess &&
-        self->gart_->storage_.synchronizeForDevice(Region::Writeback) == kIOReturnSuccess &&
+    return self->gart_->synchronizeDeviceLocked(Region::Data) == kIOReturnSuccess &&
+        self->gart_->synchronizeDeviceLocked(Region::Writeback) == kIOReturnSuccess &&
         HackyNaviGARTController::hdpFlush(self->gart_);
 }
 bool HackyNaviGraphicsQueue::syncCpu(void* context) {
     auto* self = static_cast<HackyNaviGraphicsQueue*>(context);
-    return self->gart_->storage_.synchronizeForCPU(Region::Writeback) == kIOReturnSuccess &&
-        self->gart_->storage_.synchronizeForCPU(Region::Data) == kIOReturnSuccess;
+    return self->gart_->synchronizeCpuLocked(Region::Writeback) == kIOReturnSuccess &&
+        self->gart_->synchronizeCpuLocked(Region::Data) == kIOReturnSuccess;
 }
 void HackyNaviGraphicsQueue::delayUs(void*, uint32_t us) {
     if (us >= 1000) IOSleep((us + 999) / 1000); else IODelay(us);
 }
 gfxqueue::Io HackyNaviGraphicsQueue::io() { return {this, read32, write32, publish, syncCpu, delayUs}; }
 IOReturn HackyNaviGraphicsQueue::prepare() {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     lockOwners();
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     if (state_ != State::Allocated) return finish(kIOReturnNotReady);
     if (!providerReady()) return finish(kIOReturnOffline);
     holdHardware(); gart_->mmioActive_ = true;
@@ -150,8 +167,10 @@ IOReturn HackyNaviGraphicsQueue::prepare() {
     return finish(kIOReturnSuccess);
 }
 IOReturn HackyNaviGraphicsQueue::start(const gfxqueue::PollOptions& poll) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     if (!validPoll(poll)) return kIOReturnBadArgument;
     lockOwners();
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     if (state_ != State::Prepared) return finish(kIOReturnNotReady);
     if (!providerReady()) return finish(fault());
     gart_->mmioActive_ = true;
@@ -166,6 +185,7 @@ bool HackyNaviGraphicsQueue::dataRange(uint64_t offset, uint64_t bytes) const {
     return bytes && offset >= kDataStart && offset < dataBytes_ && bytes <= dataBytes_ - offset;
 }
 IOReturn HackyNaviGraphicsQueue::writeLocked(uint64_t offset, uint32_t value, const gfxqueue::PollOptions& poll) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     if (state_ != State::Running) return kIOReturnNotReady;
     if (!validPoll(poll) || (offset & 3) || !dataRange(offset, 4)) return kIOReturnBadArgument;
     if (!providerReady()) return fault();
@@ -180,10 +200,16 @@ IOReturn HackyNaviGraphicsQueue::writeData(uint64_t offset, uint32_t value, cons
 }
 IOReturn HackyNaviGraphicsQueue::submitIndirect(const uint32_t* commands, uint32_t words,
     const gfxqueue::PollOptions& poll) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     if (!commands || !words || words > kIbBytes / 4 || !validPoll(poll)) return kIOReturnBadArgument;
     lockOwners();
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     if (state_ != State::Running) return finish(kIOReturnNotReady);
+    if (isolatedClaimed_) return finish(kIOReturnNotPermitted);
     if (!providerReady()) return finish(fault());
+    // An arbitrary trusted-kernel stream can alter VMID/producer controls.
+    // Never subsequently claim exclusive isolated-VM ownership in this epoch.
+    rawIndirectUsed_ = true;
     // No job is in flight: every successful public submission waits under the
     // same lock, and a failed wait seals this owner. Commands may overlap IB
     // source storage supplied by a trusted caller, so use memmove semantics.
@@ -193,10 +219,233 @@ IOReturn HackyNaviGraphicsQueue::submitIndirect(const uint32_t* commands, uint32
         gfxqueue::waitFence(io(), queue_, poll, queueResult_) != gfxqueue::Status::Ok) return finish(fault());
     return finish(kIOReturnSuccess);
 }
+IOReturn HackyNaviGraphicsQueue::submitIsolated(HackyNaviVMContext* context,
+    const gfxqueue::PollOptions& poll, HackyNaviVMCompletion*& completion) {
+    completion = nullptr;
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
+    if (!context || !validPoll(poll)) return kIOReturnBadArgument;
+    lockOwners(); // Queue -> Firmware -> GART excludes all queue producers.
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
+    if (state_ != State::Running || queue_.pending()) return finish(kIOReturnNotReady);
+    // Foreign owners, unmapped resources, mutable captures and altered PM4
+    // fail before context-register writes or any ring publication.
+    if (rawIndirectUsed_ || context->gart_ != gart_ || !context->captureValidLocked() ||
+        context->state_ != HackyNaviVMContext::State::Captured || context->hardwareHold_ ||
+        context->submittedQueue_ || !context->captureGeneration_ || context->submittedCaptureGeneration_)
+        return finish(kIOReturnNotPermitted);
+    // Exhaustion is not a GPU fault and must not expose a fresh/reused VM.
+    // No producer can advance under these locks; the ring guard repeats it.
+    const auto capacity = queue_.submissionCapacity();
+    if (capacity != gfxqueue::Status::Ok)
+        return finish(capacity == gfxqueue::Status::CounterExhausted ? kIOReturnNoResources : kIOReturnNotReady);
+    if (!providerReady()) return finish(fault());
+    auto* observed = HackyNaviVMCompletion::withOwners(this, context);
+    if (!observed) return finish(kIOReturnNoMemory);
+    IOReturn status = kIOReturnSuccess;
+    // One immutable producer claim precedes both VM publication and WPTR.
+    // Failed exposure/submission never gets a completed sequence or a retry.
+    isolatedClaimed_ = true; context->submittedQueue_ = this;
+    context->submittedCaptureGeneration_ = context->captureGeneration_;
+    const uint32_t maximum = 100000 / poll.delayUs;
+    const vmcontext::Poll vmPoll = {poll.maxPolls < maximum ? poll.maxPolls : maximum, poll.delayUs};
+    status = context->activateLocked(vmPoll);
+    if (status == kIOReturnSuccess) {
+        gart_->mmioActive_ = true;
+        // Actual IODMACommand publication of private tables, code, data and IB,
+        // then HDP flush. The ring's own publication follows this operation.
+        if (!HackyNaviVMContext::publish(context) ||
+            gfxqueue::submitIsolatedIndirect(io(), queue_, context->vmid_, context->capturedIndirectGpu_,
+                context->capturedWords_, queueResult_) != gfxqueue::Status::Ok ||
+            gfxqueue::waitFence(io(), queue_, poll, queueResult_) != gfxqueue::Status::Ok)
+            status = kIOReturnIOError;
+    }
+    if (status != kIOReturnSuccess) {
+        if (context->hardwareHold_) context->state_ = HackyNaviVMContext::State::FaultedRetained;
+        fault(); finish(status); observed->release(); return status;
+    }
+    const auto& result = context->capturedResult_;
+    observed->epoch_ = context->epoch_; observed->vmid_ = context->vmid_;
+    observed->captureGeneration_ = context->submittedCaptureGeneration_;
+    observed->id_ = result.buffer.id; observed->generation_ = result.buffer.generation;
+    observed->offset_ = result.offset; observed->bytes_ = result.bytes;
+    // waitFence accepts only the actual DMA-synchronized GPU-written sequence
+    // AND consumed ring pointer. No CPU-written flag can issue this object.
+    observed->sequence_ = queueResult_.fenceValue; observed->producer_ = queueResult_.observedRptr;
+    context->submittedSequence_ = observed->sequence_; context->submittedProducer_ = observed->producer_;
+    observed->valid_ = true;
+    finish(kIOReturnSuccess); completion = observed; return kIOReturnSuccess;
+}
+IOReturn HackyNaviGraphicsQueue::readCompletion(const HackyNaviVMCompletion& observed,
+    uint64_t offset, void* output, size_t bytes) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
+    if (!observed.valid_ || observed.queue_ != this || !observed.context_ || !output || !bytes ||
+        offset > observed.bytes_ || bytes > observed.bytes_ - offset ||
+        bytes - 1 > UINTPTR_MAX - reinterpret_cast<uintptr_t>(output)) return kIOReturnBadArgument;
+    lockOwners();
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
+    auto* context = observed.context_;
+    // No new queue operation may overlap readback. A later producer advance
+    // revokes this observation even if that later job has already completed.
+    if (!completionMatchesLocked(observed)) return finish(kIOReturnNotReady);
+    if (!providerReady() || !syncCpu(this)) return finish(fault());
+    if (*memory_.fence != observed.sequence_ || *memory_.rptr != observed.producer_) return finish(fault());
+    auto* buffer = context->find({observed.id_, observed.generation_});
+    if (!buffer || observed.offset_ > buffer->dma->size() ||
+        observed.bytes_ > buffer->dma->size() - observed.offset_) return finish(kIOReturnNotReady);
+    const auto status = gart_->synchronizeCpuBuffer(*buffer->dma);
+    if (status != kIOReturnSuccess) return finish(fault());
+    memmove(output, static_cast<const uint8_t*>(buffer->dma->cpuAddress()) + observed.offset_ + offset, bytes);
+    return finish(kIOReturnSuccess);
+}
+bool HackyNaviGraphicsQueue::completedContextLocked(const HackyNaviVMContext* context,
+    uint32_t sequence, uint32_t producer) const {
+    // Pinned Linux amdgpu_ids.c waits every VMID's active job fences before
+    // reuse. Here each sealed capture has exactly ONE IB, issued by this queue.
+    // The successful waitFence record cannot be supplied or edited by callers.
+    return isolatedClaimed_ && !rawIndirectUsed_ && context && context->gart_ == gart_ &&
+        context->submittedQueue_ == this && context->submittedSequence_ && context->submittedProducer_ &&
+        context->captureGeneration_ && context->submittedCaptureGeneration_ == context->captureGeneration_ &&
+        context->submittedSequence_ <= sequence && context->submittedProducer_ <= producer &&
+        context->state_ == HackyNaviVMContext::State::Active && context->hardwareHold_ && context->registryHold_ &&
+        context->mm_.phase() == vmcontext::Phase::Enabled && context->gfx_.phase() == vmcontext::Phase::Enabled &&
+        context->captureValidLocked();
+}
+bool HackyNaviGraphicsQueue::completionMatchesLocked(const HackyNaviVMCompletion& observed) const {
+    const auto* context = observed.context_;
+    if (!observed.valid_ || observed.queue_ != this || !context || state_ != State::Running || queue_.pending() ||
+        queue_.producerWords() != observed.producer_ || context->epoch_ != observed.epoch_ ||
+        context->vmid_ != observed.vmid_ || context->submittedSequence_ != observed.sequence_ ||
+        !observed.captureGeneration_ || context->captureGeneration_ != observed.captureGeneration_ ||
+        context->submittedProducer_ != observed.producer_ ||
+        !completedContextLocked(context, observed.sequence_, observed.producer_)) return false;
+    const auto& result = context->capturedResult_;
+    return observed.id_ == result.buffer.id && observed.generation_ == result.buffer.generation &&
+        observed.offset_ == result.offset && observed.bytes_ == result.bytes;
+}
+IOReturn HackyNaviGraphicsQueue::retireContextLocked(HackyNaviVMContext* context,
+    const vmcontext::Poll& poll, unsigned& drops) {
+    drops = 0;
+    const auto detached = context->detachLocked(poll);
+    if (detached != kIOReturnSuccess) return detached;
+    // The separate queue observation proved work/cache writeback complete;
+    // detach now proves both hubs cannot issue new page walks for this VMID.
+    // Disable/ACK without that producer evidence never reaches this release.
+    const auto result = context->releaseStorageLocked();
+    drops = unsigned(context->hardwareHold_) + unsigned(context->registryHold_);
+    context->hardwareHold_ = context->registryHold_ = false;
+    return result;
+}
+IOReturn HackyNaviGraphicsQueue::retireCompletion(HackyNaviVMCompletion& observed,
+    const vmcontext::Poll& poll) {
+    if (!gart_ || !gart_->accessReady()) return kIOReturnOffline;
+    if (!poll.iterations || !poll.delayUs || poll.delayUs > 10 ||
+        uint64_t(poll.iterations) * poll.delayUs > 100000) return kIOReturnBadArgument;
+    lockOwners();
+    if (!gart_->accessReady()) return finish(kIOReturnOffline);
+    if (!completionMatchesLocked(observed)) return finish(kIOReturnNotReady);
+    if (!providerReady()) return finish(fault());
+    gart_->mmioActive_ = true;
+    const gfxqueue::PollOptions queuePoll = {poll.iterations, poll.delayUs};
+    if (gfxqueue::checkIdleCompletion(io(), queue_, queuePoll, queueResult_) != gfxqueue::Status::Ok ||
+        queueResult_.fenceValue != observed.sequence_ || queueResult_.observedRptr != observed.producer_)
+        return finish(fault());
+    auto* context = observed.context_;
+    observed.valid_ = false; // revoke readback BEFORE the first detach write
+    unsigned drops = 0;
+    const auto result = retireContextLocked(context, poll, drops);
+    if (result != kIOReturnSuccess) fault();
+    finish(result);
+    // Completion retains this context and queue. Registry/publication holds
+    // are dropped only after all three owner locks are released.
+    for (unsigned n = 0; n < drops; ++n) context->release();
+    return result;
+}
+IOReturn HackyNaviGraphicsQueue::consumeCompletion(HackyNaviVMCompletion& observed,
+    const vmcontext::Poll& poll) {
+    // A recovery scope may tear down a context but must never reopen a mutable
+    // arena. Normal authority remains installed through readback and this call.
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
+    if (!poll.iterations || !poll.delayUs || poll.delayUs > 10 ||
+        uint64_t(poll.iterations) * poll.delayUs > 100000) return kIOReturnBadArgument;
+    lockOwners();
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
+    if (gart_->vmRetirementFailure_ != kIOReturnSuccess) return finish(gart_->vmRetirementFailure_);
+    if (!completionMatchesLocked(observed)) return finish(kIOReturnNotReady);
+    if (!providerReady()) return finish(fault());
+    gart_->mmioActive_ = true;
+    const gfxqueue::PollOptions queuePoll = {poll.iterations, poll.delayUs};
+    if (gfxqueue::checkIdleCompletion(io(), queue_, queuePoll, queueResult_) != gfxqueue::Status::Ok ||
+        queueResult_.fenceValue != observed.sequence_ || queueResult_.observedRptr != observed.producer_)
+        return finish(fault());
+    auto* context = observed.context_;
+    // Tokens never survive even a partially applied detach. Neither a later
+    // job nor a repeated call may use the old observation to free new storage.
+    observed.valid_ = false;
+    IOReturn result = context->detachLocked(poll);
+    if (result == kIOReturnSuccess) result = context->consumeCapturedStorageLocked();
+    const bool drop = result == kIOReturnSuccess;
+    if (drop) {
+        // Only the queue's actual idle/fence and both hub detaches reached the
+        // private cleanup. Data owners/root/registry stay; publication ends.
+        context->hardwareHold_ = false;
+    } else {
+        context->state_ = HackyNaviVMContext::State::FaultedRetained;
+        fault();
+    }
+    finish(result);
+    // The completion keeps context and queue alive. Drop the hardware hold
+    // outside Queue -> Firmware -> GART; registry ownership is unchanged.
+    if (drop) context->release();
+    return result;
+}
+IOReturn HackyNaviGraphicsQueue::retireCompletedContexts(const vmcontext::Poll& poll) {
+    if (!gart_ || !gart_->accessReady()) return kIOReturnOffline;
+    if (!poll.iterations || !poll.delayUs || poll.delayUs > 10 ||
+        uint64_t(poll.iterations) * poll.delayUs > 100000) return kIOReturnBadArgument;
+    lockOwners();
+    if (!gart_->accessReady()) return finish(kIOReturnOffline);
+    if (gart_->vmRetirementFailure_ != kIOReturnSuccess) return finish(gart_->vmRetirementFailure_);
+    if (neverStartedRetirement_) {
+        if (state_ != State::QuiescedRetained || !providerReady() ||
+            !neverStartedRetirementReadyLocked()) return finish(fault());
+        // No queue start callback occurred and no native VM exists. There is
+        // no completion to observe. Keep the real CSIB pinned for RLC drain.
+        return finish(kIOReturnSuccess);
+    }
+    if (state_ != State::QuiescedRetained || queue_.phase() != gfxqueue::Phase::Stopped ||
+        queue_.pending() || queue_.needsRetention()) return finish(kIOReturnNotReady);
+    if (!providerReady()) return finish(fault());
+    gart_->mmioActive_ = true;
+    const gfxqueue::PollOptions queuePoll = {poll.iterations, poll.delayUs};
+    if (gfxqueue::checkIdleCompletion(io(), queue_, queuePoll, queueResult_) != gfxqueue::Status::Ok)
+        return finish(fault());
+    HackyNaviVMContext* retired[7] = {}; unsigned drops[7] = {};
+    IOReturn result = kIOReturnSuccess;
+    for (unsigned slot = 0; slot < 7; ++slot) {
+        auto* context = gart_->vmOwners_[slot];
+        if (!context) continue;
+        if (!context->hardwareHold_) {
+            result = context->releaseStorageLocked();
+            drops[slot] = unsigned(context->registryHold_); context->registryHold_ = false;
+        } else if (!completedContextLocked(context, queueResult_.fenceValue, queueResult_.observedRptr)) {
+            result = kIOReturnNotPermitted;
+        } else {
+            result = retireContextLocked(context, poll, drops[slot]);
+        }
+        retired[slot] = context;
+        if (result != kIOReturnSuccess) { fault(); break; }
+    }
+    finish(result);
+    for (unsigned slot = 0; slot < 7; ++slot)
+        for (unsigned n = 0; n < drops[slot]; ++n) retired[slot]->release();
+    return result;
+}
 IOReturn HackyNaviGraphicsQueue::runWriteTest(const gfxqueue::PollOptions& poll, WriteTestResult& out) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     out = WriteTestResult{}; out.firstMismatch = UINT32_MAX;
     if (!validPoll(poll)) return kIOReturnBadArgument;
     lockOwners();
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     if (state_ != State::Running || !dataRange(kDataStart, 4096)) return finish(kIOReturnNotReady);
     auto* data = reinterpret_cast<volatile uint32_t*>(dataCpu_ + kDataStart);
     // Publish a canary page; three separated CP writes must change only their
@@ -223,6 +472,7 @@ IOReturn HackyNaviGraphicsQueue::runWriteTest(const gfxqueue::PollOptions& poll,
 IOReturn HackyNaviGraphicsQueue::computeLocked(gfxcompute::Operation operation,
     uint64_t source, uint64_t destination, uint32_t bytes, const uint32_t* pattern,
     const gfxqueue::PollOptions& poll) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     if (state_ != State::Running || !shaderReady_) return kIOReturnNotReady;
     if (!validPoll(poll) || !bytes || (bytes & 15) || (destination & 15) ||
         !dataRange(destination, bytes) ||
@@ -255,9 +505,11 @@ IOReturn HackyNaviGraphicsQueue::copyBuffer(uint64_t source, uint64_t destinatio
     lockOwners(); return finish(computeLocked(gfxcompute::Operation::Copy, source, destination, bytes, nullptr, poll));
 }
 IOReturn HackyNaviGraphicsQueue::runShaderTest(const gfxqueue::PollOptions& poll, ShaderTestResult& out) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     out = ShaderTestResult{}; out.firstMismatch = UINT32_MAX;
     if (!validPoll(poll)) return kIOReturnBadArgument;
     lockOwners();
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     constexpr uint64_t source = kDataStart + 4096, destination = kDataStart + 3 * 4096;
     constexpr uint32_t bytes = 4096, count = 5 * 4096 / 4;
     if (state_ != State::Running || !shaderReady_ || !dataRange(kDataStart, uint64_t(count) * 4))
@@ -304,6 +556,12 @@ IOReturn HackyNaviGraphicsQueue::stop(const gfxqueue::PollOptions& poll) {
         return finish(result);
     }
     if (!providerReady()) return finish(fault());
+    if (state_ == State::Prepared) {
+        if (!neverStartedRetirementReadyLocked()) return finish(fault());
+        neverStartedRetirement_ = true;
+        state_ = State::QuiescedRetained;
+        return finish(kIOReturnSuccess);
+    }
     gart_->mmioActive_ = true;
     if (queue_.needsRetention() && gfxqueue::stop(io(), queue_, poll, queueResult_) != gfxqueue::Status::Ok)
         return finish(fault());
@@ -320,6 +578,7 @@ IOReturn HackyNaviGraphicsQueue::retireAfterQuiescence(const gfxinit::Retirement
     if (state_ != State::QuiescedRetained || queue_.needsRetention() || queue_.pending())
         return finish(kIOReturnNotReady);
     if (!providerReady()) return finish(fault());
+    if (neverStartedRetirement_ && !neverStartedRetirementReadyLocked()) return finish(fault());
     // Retirement stops RLC and is terminal for this epoch. Revoke readiness
     // BEFORE any I/O, including on failure; freeing the queue lease must not
     // permit a new queue to reuse the old autoload/SMU CPU state.
@@ -330,6 +589,7 @@ IOReturn HackyNaviGraphicsQueue::retireAfterQuiescence(const gfxinit::Retirement
     if (gfxinit::retireClearState(gart_->ipLayout_, gart_->registerBytes_, firmware_->smu_, gart_->allocator_,
         gcIo, poll, initState_, initResult_) != gfxinit::Status::Ok || initState_.needsClearStateRetention())
         return finish(fault());
+    firmware_->rlcRetired_ = true;
     const auto result = releaseAllocationsLocked();
     if (result != kIOReturnSuccess) return finish(fault());
     state_ = State::Retired;
@@ -356,6 +616,7 @@ IOReturn HackyNaviGraphicsQueue::releaseAllocationsLocked() {
 }
 IOReturn HackyNaviGraphicsQueue::releaseAfterDeviceReset() {
     lockOwners();
+    if (hardwareHold_ && !gart_->accessReady()) return finish(kIOReturnOffline);
     const auto result = releaseAllocationsLocked();
     if (result != kIOReturnSuccess) return finish(result);
     state_ = State::Retired;

@@ -153,6 +153,42 @@ Status buildLayout(const uint8_t* bytes,size_t count,uint64_t barBytes,Layout& o
     Layout candidate={};if(!populate(b,barBytes,candidate))return Status::OutsideBar;
     out=candidate;return Status::Ok;
 }
+PowerInventoryStatus inventoryVcnPower(const Layout& l,const Io& io,PowerInventory& r) {
+    r=PowerInventory{};r.failedInstance=0xff;
+    for(size_t instance=0;instance<kVcnInstances;++instance)
+        r.probes[instance].instance=static_cast<uint8_t>(instance);
+    if(!io.read32 || !valid(l))return r.status=PowerInventoryStatus::InvalidArgument;
+    // Pinned Linux amdgpu_vcn.c:1607-1618 and amdgpu_vcn.h's
+    // UVD_POWER_STATUS__UVD_POWER_STATUS_TILES_OFF=0x1. This is the
+    // documented always-readable entry, unlike PGFSM or the client window.
+    uint8_t tilesOffInstance=0xff;
+    for(size_t instance=0;instance<kVcnInstances;++instance) {
+        auto& probe=r.probes[instance];probe.reg=l.vcn[instance][0];
+        r.failedInstance=static_cast<uint8_t>(instance);
+        for(unsigned sample=0;sample<2;++sample) {
+            const uint8_t bit=static_cast<uint8_t>(1U<<sample);
+            probe.attemptedMask|=bit;r.lastRegister=probe.reg;
+            r.lastValue=0;r.lastReadSucceeded=false;++r.reads;
+            uint32_t value=0;
+            if(!io.read32(io.context,probe.reg,value))return r.status=PowerInventoryStatus::ReadFailed;
+            r.lastReadSucceeded=true;r.lastValue=value;probe.raw[sample]=value;
+            probe.readSucceededMask|=bit;
+            if(value==UINT32_MAX)return r.status=PowerInventoryStatus::DeviceUnavailable;
+            probe.validMask|=bit;
+            if(sample && value!=probe.raw[0])return r.status=PowerInventoryStatus::Changing;
+            if((value&1U) && tilesOffInstance==0xff)tilesOffInstance=static_cast<uint8_t>(instance);
+        }
+    }
+    r.failedInstance=tilesOffInstance;
+    return r.status=tilesOffInstance==0xff?PowerInventoryStatus::ReadAccessObserved:PowerInventoryStatus::TilesOff;
+}
+const char* statusString(PowerInventoryStatus status) {switch(status) {
+#define NAME(x) case PowerInventoryStatus::x:return #x
+    NAME(NotAttempted);NAME(ReadAccessObserved);NAME(InvalidArgument);NAME(ReadFailed);
+    NAME(DeviceUnavailable);NAME(Changing);NAME(TilesOff);
+#undef NAME
+    }return "Unknown";
+}
 Status checkStopped(const Layout& l,const Io& io,Result& r) {
     r=Result{};r.instance=0xff;
     if(!io.read32 || !valid(l))return finish(r,Status::InvalidArgument);
@@ -195,4 +231,43 @@ const char* statusString(Status s){switch(s){
     NAME(VcnNotStopped);NAME(JpegNotStopped);NAME(LsdmaNotIdle);
 #undef NAME
     }return "Unknown";}
+namespace {
+LsdmaStatus finishLsdma(LsdmaResult& r,LsdmaStatus status) {
+    r.status=status;return status;
+}
+bool matchLsdma(const Io& io,uint32_t reg,const Field& field,LsdmaStatus failure,LsdmaResult& r) {
+    r.lastRegister=reg;r.mask=field.mask;r.expected=field.value;
+    r.lastValue=0;++r.reads;uint32_t value=0;
+    if(!io.read32(io.context,reg,value)) {
+        finishLsdma(r,LsdmaStatus::ReadFailed);return false;
+    }
+    r.lastValue=value;
+    if(value==UINT32_MAX) {
+        finishLsdma(r,LsdmaStatus::DeviceUnavailable);return false;
+    }
+    if((value&field.mask)!=field.value) {
+        finishLsdma(r,failure);return false;
+    }
+    return true;
+}
+}
+LsdmaStatus checkLsdmaStopped(const Layout& l,const Io& io,LsdmaResult& r) {
+    r=LsdmaResult{};r.pass=0xff;
+    if(!io.read32 || !valid(l))return finishLsdma(r,LsdmaStatus::InvalidArgument);
+    const Field zero={0,UINT32_MAX,0};
+    for(r.pass=0;r.pass<2;++r.pass) {
+        if(!matchLsdma(io,l.sos,zero,LsdmaStatus::PriorDriverRequiresReset,r))return r.status;
+        for(size_t i=0;i<kLsdmaRegisters;++i)
+            if(!matchLsdma(io,l.lsdma[i],lsdmaFields[i],LsdmaStatus::LsdmaNotIdle,r))return r.status;
+    }
+    if(!matchLsdma(io,l.sos,zero,LsdmaStatus::PriorDriverRequiresReset,r))return r.status;
+    return finishLsdma(r,LsdmaStatus::Ok);
+}
+const char* statusString(LsdmaStatus status) {switch(status) {
+#define NAME(x) case LsdmaStatus::x:return #x
+    NAME(Ok);NAME(InvalidArgument);NAME(ReadFailed);NAME(DeviceUnavailable);
+    NAME(PriorDriverRequiresReset);NAME(LsdmaNotIdle);
+#undef NAME
+    }return "Unknown";
+}
 } }

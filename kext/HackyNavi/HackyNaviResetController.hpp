@@ -5,6 +5,7 @@
 #include <IOKit/IOLocks.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include "HackyNaviFunctionGroup.hpp"
 #include "hackynavi/device_discovery.hpp"
 #include "hackynavi/runtime_rom.hpp"
 #include "hackynavi/mode1_reset.hpp"
@@ -27,6 +28,31 @@ class HackyNaviAtomController;
 class HackyNaviResetController : public OSObject {
     OSDeclareDefaultStructors(HackyNaviResetController)
 public:
+    // Stack binding to the actual outer function-group gate. This guard holds
+    // a retain, not Reset's mutex, so normal methods still serialize locally.
+    // No hardware access is performed while binding. A revoked retirement
+    // scope can therefore still release never-published CPU owners; every
+    // hardware entry validates the actual scope before and after its access.
+    class Access {
+        friend class HackyNaviResetController;
+    public:
+        Access(HackyNaviResetController*,HackyNaviFunctionGroup::Operation&);
+        Access(HackyNaviResetController*,HackyNaviFunctionGroup::RetirementScope&);
+        ~Access();
+        Access(const Access&)=delete;
+        Access& operator=(const Access&)=delete;
+        bool valid() const;
+    private:
+        void bind(HackyNaviResetController*);
+        HackyNaviResetController* controller_;
+        HackyNaviFunctionGroup::Operation* operation_;
+        HackyNaviFunctionGroup::RetirementScope* retirement_;
+        IOPCIDevice* device_;
+        IOService* owner_;
+        IOMemoryMap* map_;
+        thread_t thread_;
+        uint64_t serial_;
+    };
     enum class State { Empty, Attached, Prepared, Resetting, ProtocolCompleteRetained,
         VerifyingRetirement, RetirementVerified, RetirementTransferred,
         FailedUnpublished, FaultedRetained };
@@ -78,6 +104,9 @@ public:
     // engine fault can make discovery/ROM acquisition unavailable. Selector
     // writes only. No caller-supplied ROM, layout or readiness flags accepted.
     IOReturn prepare();
+    // Retained immutable CPU-only result of the most recent prepare call.
+    // Null means serialization failed or no call completed, never success.
+    OSDictionary* copyPreparationEvidence();
     // Running SMU INTERRUPTS_ENABLED is checked through discovered RSMU.
     // Executes DEBUG_PARAM=0, DEBUG_MSG=2, DEBUG_RESP=0 and the mandatory 500ms
     // blackout, then fresh BME-off PCI restore and actual readback. No debug
@@ -105,7 +134,7 @@ public:
     // this after later PCI/BME changes and before allowing system PM; ordinary
     // saveDeviceState(0) may otherwise silently reuse that stale shadow. This
     // method always forces a fresh native save and checks live D0/config.
-    IOReturn refreshPermanentPciState();
+    IOReturn refreshPermanentPciState(HackyNaviFunctionGroup::RetirementScope&);
     bool requiresHardwareRetirement() const { return hardwareHold_; }
     bool permanentPciShadowInstalled() const { return permanentShadow_; }
     // Identity binding for a cooperating post-reset owner. This performs no
@@ -113,6 +142,10 @@ public:
     bool matchesDevice(IOPCIDevice* device, IOService* owner, IOMemoryMap* map) const {
         return device_ == device && openOwner_ == owner && registerMap_ == map;
     }
+    // Same-thread actual Access only. These never acquire Reset's mutex and
+    // let the cooperating ATOM adapter reject an absent/revoked outer gate.
+    bool accessReady() const;
+    bool recoveryAccessReady() const;
     State state() const { return state_; }
     Stage stage() const { return stage_; }
     IOReturn lastResult() const { return result_; }
@@ -132,7 +165,28 @@ private:
         uint16_t command, expressCapabilities, controls[4];
         uint8_t pmOffset, expressOffset, controlCount;
     };
+    enum class PreparationStep : uint8_t { Admission, Discovery, IpLayout,
+        RomLayout, RomCapture, Subsystem, Firmware, Hdp, Nbio, Psp,
+        DebugMessage, DebugResponse, ScratchLayout, PciSnapshot, PciVerify,
+        Sos, Scratch3, Scratch7, Complete };
+    struct PreparationObservation {
+        State stateBefore;
+        PreparationStep step;
+        uint32_t attempted,completed,rawAttempted,rawReadSucceeded,rawValid;
+        uint32_t subsystem;
+        hackynavi::IpLayoutDiagnostic diagnostic;
+        hackynavi::HdpStatus hdpStatus;
+        hackynavi::NbioStatus nbioStatus;
+        hackynavi::psp::Status pspStatus;
+        hackynavi::IpLayoutStatus messageStatus,responseStatus;
+        PciSnapshot pci;
+    };
+    void preparationStep(PreparationStep);
+    void preparationPassed();
+    void capturePreparationEvidence(IOReturn);
     IOReturn initialize(IOPCIDevice*,IOService*,IOMemoryMap*);
+    const Access* currentAccess() const;
+    bool blackoutAccessReady() const;
     bool providerReady() const;
     bool snapshotPci(PciSnapshot&) const;
     bool verifyPci(const PciSnapshot&) const;
@@ -156,6 +210,9 @@ private:
     static void delayMs(void*,uint32_t);
     static void delayUs(void*,uint32_t);
     IOLock* lock_;
+    Access* access_;
+    thread_t accessThread_;
+    uint64_t accessSerial_,proofAccessSerial_;
     IOPCIDevice* device_;
     IOService* openOwner_;
     IOMemoryMap* registerMap_;
@@ -184,6 +241,9 @@ private:
     Observations observations_;
     RetirementProof proof_;
     RetirementObservations retirement_;
+    PreparationObservation preparation_;
+    OSDictionary* preparationEvidence_;
+    bool preparationRecording_;
     hackynavi::MemoryLayout retirementMemory_;
     hackynavi::bootdisplaystop::State retirementScanout_;
 };

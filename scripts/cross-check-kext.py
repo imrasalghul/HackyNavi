@@ -101,6 +101,7 @@ def main():
     parser.add_argument("--probe-link", action="store_true",
                         help="Record whether Zig accepts -kext; currently unsupported")
     args = parser.parse_args()
+    subprocess.run([sys.executable, str(ROOT / "userspace/compiler/verify_fixture.py"), "--check"], check=True)
     sdk = args.sdk.resolve()
     output = args.output.resolve()
     headers = sdk / "Headers"
@@ -156,39 +157,87 @@ def main():
                               "MH_OBJECT files are not a loadable kext; nothing is installed or signed."]}
     object_paths = []
     sources = ("kext/HackyNavi/HackyNavi.cpp", "kext/HackyNavi/HackyNaviDevice.cpp",
+               "kext/HackyNavi/HackyNaviDeviceEngines.cpp",
+               "kext/HackyNaviAccelerator/HackyNaviAccelerator.cpp",
+               "kext/HackyNaviAccelerator/Module.cpp",
+               "kext/HackyNavi/HackyNaviClientSession.cpp",
+               "kext/HackyNavi/HackyNaviUserClient.cpp",
+               "kext/HackyNavi/HackyNaviClientMemory.cpp",
+               "userspace/transport/native_protocol.cpp",
                "kext/HackyNavi/HackyNaviDMABuffer.cpp",
+               "kext/HackyNavi/HackyNaviVMContext.cpp",
+               "kext/HackyNavi/HackyNaviVMProduct.cpp",
+               "kext/HackyNavi/HackyNaviVMGraphics.cpp",
+               "kext/HackyNavi/HackyNaviVMCompletion.cpp",
                "kext/HackyNavi/HackyNaviGARTStorage.cpp",
                "kext/HackyNavi/HackyNaviGARTController.cpp",
+               "kext/HackyNavi/HackyNaviGARTTopology.cpp",
+               "kext/HackyNavi/HackyNaviGARTGraphicsTopology.cpp",
                "kext/HackyNavi/HackyNaviSDMAQueue.cpp",
                "kext/HackyNavi/HackyNaviFirmwareController.cpp",
+               "kext/HackyNavi/HackyNaviFirmwareTA.cpp",
+               "kext/HackyNavi/HackyNaviFirmwareClocks.cpp",
                "kext/HackyNavi/HackyNaviGraphicsQueue.cpp",
+               "kext/HackyNavi/HackyNaviGraphicsQueueReuse.cpp",
                "kext/HackyNavi/HackyNaviDisplayController.cpp",
+               "kext/HackyNavi/HackyNaviDisplayClockControl.cpp",
+               "kext/HackyNavi/HackyNaviDisplayFirmwareClocks.cpp",
                "kext/HackyNavi/HackyNaviEngineController.cpp",
                "kext/HackyNavi/HackyNaviResetController.cpp",
                "kext/HackyNavi/HackyNaviAtomController.cpp",
+               "kext/HackyNavi/HackyNaviLifecycleController.cpp",
+               "kext/HackyNavi/HackyNaviFunctionGroup.cpp",
                "src/edid.cpp",
                "src/edid_acquire.cpp",
                "src/otg.cpp",
                "src/vpg.cpp",
                "src/avi.cpp",
                "src/hdmi_stream.cpp",
+               "src/dp_stream.cpp",
+               "src/display_clock.cpp",
+               "src/display_bandwidth.cpp",
+               "src/isolated_compute.cpp",
+               "src/gfx_aco_fixture.cpp",
+               "src/gfx11_compute_product.cpp",
+               "src/gfx11_dispatch_product.cpp",
+               "src/gfx11_graphics_barrier.cpp",
+               "src/gfx11_graphics_product.cpp",
+               "src/gfx11_graphics_draw.cpp",
+               "src/gfx11_graphics_memory.cpp",
+               "src/gfx11_graphics_topology.cpp",
+               "src/gfx11_color_target.cpp",
+               "src/gfx11_color_topology.cpp",
+               "src/hdmi_frl.cpp",
+               "src/hpo_frl.cpp",
+               "src/display_smu.cpp",
+               "src/display_model_input.cpp",
+               "src/display_dentist.cpp",
+               "src/display_idle.cpp",
+               "src/display_power.cpp",
+               "src/hubp_scanout.cpp",
+               "src/pixel_pipeline.cpp",
                "src/gfx_compute.cpp", "src/hdmi_link.cpp", "src/atom_vm.cpp",
                "src/rom.cpp", "src/discovery.cpp", "src/device_discovery.cpp",
-               "src/ip_layout.cpp", "src/memory_layout.cpp", "src/gpu_vm.cpp",
+               "src/ip_layout.cpp", "src/memory_layout.cpp", "src/gpu_vm.cpp", "src/vm_context.cpp", "src/vm_page_tree.cpp",
                "src/vram_allocator.cpp", "src/vram_transfer.cpp", "src/gart.cpp", "src/hdp.cpp",
-               "src/vram_reservations.cpp", "src/boot_display.cpp", "src/boot_display_stop.cpp", "src/bootstrap_quiesce.cpp",
+               "src/vram_reservations.cpp", "src/boot_display.cpp", "src/boot_display_context.cpp", "src/boot_display_stop.cpp", "src/boot_display_backend.cpp", "src/bootstrap_quiesce.cpp",
                "src/mode1_reset.cpp", "src/nbio.cpp",
                "src/sdma.cpp", "src/sdma_queue.cpp", "src/firmware.cpp",
                "src/psp.cpp", "src/sdma_firmware.cpp",
-               "src/psp_ring.cpp", "src/gfx_firmware.cpp", "src/dp_aux.cpp",
-               "src/hdmi_ddc.cpp", "src/smu.cpp", "src/gfx_init.cpp", "src/gfx_queue.cpp",
+               "src/psp_ring.cpp", "src/psp_ta.cpp", "src/psp_display_ta.cpp", "src/gfx_firmware.cpp", "src/dp_aux.cpp",
+               "src/hdmi_ddc.cpp", "src/smu.cpp", "src/smu_clock.cpp", "src/gfx_init.cpp", "src/gfx_queue.cpp",
                "src/dmcub.cpp", "src/dmcub_firmware.cpp",
                "src/runtime_rom.cpp", "src/cold_aux.cpp", "src/cold_dma.cpp", "src/dio_link.cpp",
+               "src/audio_quiesce.cpp", "src/early_media.cpp", "src/efi_console.cpp",
+               "kext/HackyNavi/HackyNaviBootConsole.cpp",
+               "kext/HackyNavi/HackyNaviBootBackendCapture.cpp",
+               "kext/HackyNavi/HackyNaviScanoutSurface.cpp", "src/hubp_aperture.cpp",
                "src/dp_training.cpp",
                "kext/HackyNavi/Module.cpp", str(firmware_output / "FirmwareResources.cpp"))
     for relative in sources:
         source = ROOT / relative
-        destination = output / (source.stem + ".o")
+        late_accelerator = source.parent.name == "HackyNaviAccelerator"
+        destination = output / (("Late-" if late_accelerator else "") + source.stem + ".o")
         command = [compiler] + flags + ["-c", str(source), "-o", str(destination)]
         report["commands"].append(command)
         print(f"Compiling {relative}", flush=True)
@@ -199,20 +248,30 @@ def main():
         item["source"] = relative
         item["source_sha256"] = sha256(source)
         report["objects"].append(item)
-        object_paths.append(destination)
+        # The optional link probe is for the early core only. Combining both
+        # modules would restore the SystemKC dependency and duplicate kmod_info.
+        if not late_accelerator:
+            object_paths.append(destination)
     objects_by_source = {item["source"]: item for item in report["objects"]}
-    module_symbols = objects_by_source["kext/HackyNavi/Module.cpp"]["module_symbols"]
-    for symbol in ("_kmod_info", "__realmain", "__antimain"):
-        if not module_symbols.get(symbol, {}).get("defined"):
-            raise RuntimeError(f"Required module definition missing: {symbol}")
+    for module in ("kext/HackyNavi/Module.cpp", "kext/HackyNaviAccelerator/Module.cpp"):
+        module_symbols = objects_by_source[module]["module_symbols"]
+        for symbol in ("_kmod_info", "__realmain", "__antimain"):
+            if not module_symbols.get(symbol, {}).get("defined"):
+                raise RuntimeError(f"Required module definition missing in {module}: {symbol}")
     for relative in ("kext/HackyNavi/HackyNavi.cpp", "kext/HackyNavi/HackyNaviDevice.cpp",
+                     "kext/HackyNaviAccelerator/HackyNaviAccelerator.cpp",
+                     "kext/HackyNavi/HackyNaviClientSession.cpp",
+                     "kext/HackyNavi/HackyNaviUserClient.cpp",
                      "kext/HackyNavi/HackyNaviGARTController.cpp", "kext/HackyNavi/HackyNaviSDMAQueue.cpp",
                      "kext/HackyNavi/HackyNaviFirmwareController.cpp",
                      "kext/HackyNavi/HackyNaviGraphicsQueue.cpp",
                      "kext/HackyNavi/HackyNaviDisplayController.cpp",
                      "kext/HackyNavi/HackyNaviEngineController.cpp",
                      "kext/HackyNavi/HackyNaviResetController.cpp",
-                     "kext/HackyNavi/HackyNaviAtomController.cpp"):
+                     "kext/HackyNavi/HackyNaviAtomController.cpp",
+                     "kext/HackyNavi/HackyNaviLifecycleController.cpp",
+                     "kext/HackyNavi/HackyNaviFunctionGroup.cpp",
+                     "kext/HackyNavi/HackyNaviVMCompletion.cpp"):
         if "__mod_init_func" not in objects_by_source[relative]["sections"]:
             raise RuntimeError(f"IOKit class object has no C++ static-initializer section: {relative}")
     if args.probe_link:
@@ -228,7 +287,7 @@ def main():
                                 "note": "A successful future link probe still requires independent kext validation."}
     report_path = output / "cross-check-report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(f"Verified {len(object_paths)} x86_64 Mach-O object files. Report: {report_path}")
+    print(f"Verified {len(report['objects'])} x86_64 Mach-O object files. Report: {report_path}")
     if args.probe_link and report["link_probe"]["exit_code"]:
         print("Link probe failed: " + report["link_probe"]["stderr"].strip())
     print("Compile-only result. No loadable kext, macOS runtime test, or installation.")

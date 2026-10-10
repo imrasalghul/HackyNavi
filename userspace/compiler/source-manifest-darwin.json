@@ -1,0 +1,51 @@
+{
+  "mesa_commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+  "base_manifest_sha256": "f5b423665e8f2f94cc4d6137d392634135908e8b0aaad3c9c6d5f6c974f73152",
+  "extraction": {
+    "source": "src/amd/common/ac_gpu_info.c",
+    "function": "ac_fill_compiler_info",
+    "function_sha256_utf8_lf": "5a47c1e8b2232cab53b15a41b211a1d54f8115a9867e41c6dfd3afd3f49e1936",
+    "compiled_file_sha256": "a48442fb6da743f8a3067c4434ef14a80c5b90967bd64cb736ce63ab975f0e05"
+  },
+  "staged_patches": [
+    "Enable compiler dependencies without GPU API frontends.",
+    "Compile AMD common compiler helpers and NIR only; omit DRM/winsys/platform query sources.",
+    "Require nm only when the disabled upstream test suite needs symbol checks.",
+    "Define HAVE_TSERVER to select addrlib public typedefs instead of Apple-private addrExtDef.h.",
+    "Extract exact pinned ac_fill_compiler_info with original notice and genuine DRM type definitions."
+  ],
+  "configure_command": [
+    "C:\\Python314\\python.exe",
+    "-m",
+    "mesonbuild.mesonmain",
+    "setup",
+    "--reconfigure",
+    "C:\\Users\\Ras\\Documents\\ChatGPT\\HackyNavi\\.tools\\userspace\\build-mesa-compiler-darwin",
+    "C:\\Users\\Ras\\Documents\\ChatGPT\\HackyNavi\\.tools\\userspace\\mesa-compiler-source-darwin",
+    "--cross-file",
+    "C:\\Users\\Ras\\Documents\\ChatGPT\\HackyNavi\\userspace\\compiler\\darwin.local.ini",
+    "-Dgallium-drivers=",
+    "-Dvulkan-drivers=",
+    "-Dplatforms=",
+    "-Dglx=disabled",
+    "-Degl=disabled",
+    "-Dgbm=disabled",
+    "-Dgles1=disabled",
+    "-Dgles2=disabled",
+    "-Dopengl=false",
+    "-Dllvm=disabled",
+    "-Damd-use-llvm=false",
+    "-Dshared-glapi=disabled",
+    "-Dbuild-tests=false",
+    "-Dtools=",
+    "-Dxmlconfig=disabled",
+    "-Dzstd=disabled",
+    "-Dzlib=disabled",
+    "-Dshader-cache=disabled",
+    "-Dvalgrind=disabled",
+    "-Dlibunwind=disabled",
+    "-Dbuildtype=debugoptimized",
+    "-Db_ndebug=false",
+    "--wrap-mode=nofallback"
+  ]
+}

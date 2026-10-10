@@ -1,0 +1,33 @@
+[package]
+name = "hackynavi-metal-compiler"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+description = "AIR-to-SPIR-V compiler and C interface for the HackyNavi Metal userspace driver"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "hackynavi-shader"
+path = "src/main.rs"
+
+[dependencies]
+metal2vulkan = { path = "vendor/metal2vulkan", features = ["serde"] }
+serde_json = "1"
+sha2 = "=0.10.9"
+ash = { version = "0.38", optional = true }
+
+[features]
+vulkan-test = ["dep:ash"]
+
+[workspace]
+exclude = ["vendor/metal2vulkan"]
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+strip = "debuginfo"
+

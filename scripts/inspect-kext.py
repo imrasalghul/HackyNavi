@@ -7,14 +7,37 @@ import json
 from pathlib import Path
 import plistlib
 import struct
+import uuid
 
 
-def inspect(bundle):
+def boot_injection_imports(binary, providers):
+    """Check actual linked imports against measured build-host KC providers.
+
+    A kmutil library lookup across all KCs is not an OpenCore prelink test.
+    In particular, a SystemKC superclass vtable is unavailable to BootKC
+    injection. This deliberately requires BootKC evidence for every import;
+    passing is a prerequisite, never proof of target loadability.
+    """
+    unavailable = {}
+    for symbol in binary["undefined_kernel_symbols"]:
+        provider = providers.get(symbol)
+        if not isinstance(provider, dict) or not str(provider.get("collection", "")).endswith(
+                "/BootKernelExtensions.kc"):
+            unavailable[symbol] = provider
+    return {"scope": "build-host kernel collection providers, not a target load test",
+            "checked_imports": len(binary["undefined_kernel_symbols"]),
+            "all_imports_in_boot_collection": not unavailable,
+            "imports_not_proven_in_boot_collection": unavailable}
+
+
+def inspect(bundle, executable="HackyNavi"):
     with (bundle / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
-    if info.get("CFBundleExecutable") != "HackyNavi" or info.get("CFBundlePackageType") != "KEXT":
+    if executable not in ("HackyNavi", "HackyNaviAccelerator"):
+        raise ValueError("Unexpected kernel executable name")
+    if info.get("CFBundleExecutable") != executable or info.get("CFBundlePackageType") != "KEXT":
         raise ValueError("Unexpected bundle identity/type")
-    path = bundle / "Contents/MacOS/HackyNavi"
+    path = bundle / "Contents/MacOS" / executable
     data = path.read_bytes()
     if len(data) < 32:
         raise ValueError("Truncated Mach-O header")
@@ -27,6 +50,7 @@ def inspect(bundle):
     cursor = 32
     sections, symbols, undefined = [], {}, []
     minimum_os, sdk = None, None
+    macho_uuid = None
     for _ in range(count):
         if cursor + 8 > limit:
             raise ValueError("Truncated load command")
@@ -66,6 +90,10 @@ def inspect(bundle):
                 symbols[name] = {"defined": defined, "section": section, "value": value}
                 if not defined:
                     undefined.append(name)
+        elif command == 0x1b:
+            if length != 24 or macho_uuid is not None:
+                raise ValueError("Invalid or repeated Mach-O UUID command")
+            macho_uuid = str(uuid.UUID(bytes=data[cursor + 8:cursor + 24])).upper()
         elif command == 0x32:
             if length < 24:
                 raise ValueError("Short build-version command")
@@ -92,7 +120,8 @@ def inspect(bundle):
     if project_undefined:
         raise ValueError(f"Unlinked project definitions: {project_undefined}")
     return {"format": "MH_KEXT_BUNDLE", "architecture": "x86_64", "bytes": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(), "cpu_subtype": subtype, "flags": flags,
+            "sha256": hashlib.sha256(data).hexdigest(), "uuid": macho_uuid,
+            "cpu_subtype": subtype, "flags": flags,
             "minimum_os_raw": minimum_os, "sdk_raw": sdk, "sections": sections,
             "module_symbols": {s: symbols[s] for s in ("__start", "__stop", "_kmod_info", "__realmain", "__antimain")},
             "undefined_kernel_symbols": undefined, "bundle_identifier": info["CFBundleIdentifier"],
@@ -103,8 +132,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--executable", choices=("HackyNavi", "HackyNaviAccelerator"), default="HackyNavi")
     args = parser.parse_args()
-    result = inspect(args.bundle)
+    result = inspect(args.bundle, args.executable)
     rendered = json.dumps(result, indent=2) + "\n"
     if args.output:
         args.output.write_text(rendered, encoding="utf-8")

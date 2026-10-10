@@ -76,6 +76,14 @@ public:
     // caller supports uniform settings and may repeat once per active lane
     // to match dcn10_link_encoder_dp_set_lane_settings's command sequence.
     Status dpDrive(const Route&,const DpDrive&,const PollOptions&,Result&);
+    // Cold display clock ownership: type76/subtype0, FAMS disabled and no
+    // streams. Caller has quiesced all pipes and disabled PMFW's always-wait
+    // policy through the separate DAL owner. Never use for an active FPO/SubVP
+    // transition. Success proves actual ring consumption, not a clock hold.
+    Status disableFams(const PollOptions&,Result&);
+    // Read-only fresh verification for a larger owner's preflight. Requires
+    // the exact owned idle ring and running firmware; faults on lost ownership.
+    Status checkIdle(Result&);
     // Observe actual hardware RPTR after a timeout without replaying command.
     // A fault remains sticky even if pending work is subsequently consumed.
     Status wait(const PollOptions&,Result&);

@@ -78,6 +78,12 @@ bool rmw(const Io& io,uint32_t reg,uint32_t mask,uint32_t value,Result& r) {
     uint32_t old=0; return read(io,reg,old,r) && write(io,reg,(old&~mask)|(value&mask),r) && match(io,reg,mask,value&mask,r);
 }
 } // namespace
+Status State::submissionCapacity() const {
+    if(pending_)return Status::PendingSubmission;
+    if(phase_!=Phase::Running)return Status::InvalidState;
+    if(sequence_==UINT32_MAX || producer_>UINT32_MAX-2048)return Status::CounterExhausted;
+    return Status::Ok;
+}
 struct Access {
     static Status finish(const State& s,Result& r,Status status) {
         r.retentionRequired=s.retain_; r.producerWords=s.producer_; return end(r,status);
@@ -97,9 +103,10 @@ struct Access {
         for(unsigned i=0;i<4;++i)if(overlaps(a[i],n[i],gpu,bytes))return true; return false;
     }
     static Status guard(const Io& io,State& s,Result& r) {
-        if(s.pending_)return finish(s,r,Status::PendingSubmission);
+        const auto capacity=s.submissionCapacity();
+        if(capacity==Status::PendingSubmission)return finish(s,r,capacity);
         if(s.phase_!=Phase::Running || !ioValid(io))return finish(s,r,Status::InvalidState);
-        if(s.sequence_==UINT32_MAX || s.producer_>UINT32_MAX-2048)return finish(s,r,Status::CounterExhausted);
+        if(capacity!=Status::Ok)return finish(s,r,capacity);
         if(!io.syncForCpu(io.context))return fault(s,r,Status::SyncFailed);
         r.observedRptr=*s.memory_.rptr;
         if(r.observedRptr!=s.producer_)return fault(s,r,Status::PointerCorrupt);
@@ -147,10 +154,10 @@ struct Access {
     static Status start(const Navi31IpLayout& ips,uint64_t bar,const gfxinit::State& init,const smu::State& smu,
         const Config& c,const Memory& m,const Io& io,const PollOptions& p,State& s,Result& r) {
         r=Result{};
-        if(s.phase_!=Phase::Fresh || !init.prepared() || !smu.awake())return finish(s,r,Status::InvalidState);
+        if(s.phase_!=Phase::Fresh || s.startAttempted_ || !init.prepared() || !smu.awake())return finish(s,r,Status::InvalidState);
         if(!memoryValid(c,m) || !ioValid(io) || !pollValid(p))return finish(s,r,Status::InvalidArgument);
         const auto resolved=resolve(ips,bar,s.regs_); if(resolved!=Status::Ok)return finish(s,r,resolved);
-        r.stage=Stage::Guard;
+        s.startAttempted_=true; r.stage=Stage::Guard;
         if(!match(io,s.regs_[Imu],0x1f,0x1f,r,Status::ActiveEngine) ||
             !match(io,s.regs_[Bootload],0x80000000,0x80000000,r,Status::ActiveEngine) ||
             !match(io,s.regs_[StatusReg],UINT32_MAX,0,r,Status::ActiveEngine) ||
@@ -187,14 +194,24 @@ struct Access {
         const auto sent=publish(io,s,r); if(sent!=Status::Ok)return sent;
         return wait(io,s,p,r);
     }
-    static Status submit(const Io& io,State& s,uint64_t gpu,uint32_t value,bool ib,Result& r) {
+    static Status submit(const Io& io,State& s,uint64_t gpu,uint32_t value,bool ib,Result& r,uint8_t vmid=0) {
         r=Result{};
         const uint64_t bytes=ib?uint64_t(value)*4:4;
         if((gpu&3) || !range(gpu,bytes) || (ib && (!value || value>0xfffff)))return finish(s,r,Status::InvalidArgument);
-        if(controlOverlap(s,gpu,bytes))return finish(s,r,Status::InvalidArgument);
+        if(vmid>7 || (!ib && vmid))return finish(s,r,Status::InvalidArgument);
+        if(vmid && (gpu<4096 || gpu>=(UINT64_C(1)<<47) || bytes>(UINT64_C(1)<<47)-gpu))
+            return finish(s,r,Status::InvalidArgument);
+        if(!vmid && controlOverlap(s,gpu,bytes))return finish(s,r,Status::InvalidArgument);
         const auto ready=guard(io,s,r); if(ready!=Status::Ok)return ready;
-        if(ib) { emit(s,0xc0023f00); emit(s,uint32_t(gpu)); emit(s,uint32_t(gpu>>32)); emit(s,value); }
+        // gfx_v11_0_ring_emit_ib_gfx: VMID in bits27:24; graphics has no
+        // compute-only INDIRECT_BUFFER_VALID. Ring/writeback stay kernel VMID0.
+        if(ib) { emit(s,0xc0023f00); emit(s,uint32_t(gpu)); emit(s,uint32_t(gpu>>32)); emit(s,value|(uint32_t(vmid)<<24)); }
         else { emit(s,0xc0033700); emit(s,0x00100500); emit(s,uint32_t(gpu)); emit(s,uint32_t(gpu>>32)); emit(s,value); }
+        if(vmid) {
+            // Kernel-owned tail, outside the captured IB: CS_PARTIAL_FLUSH,
+            // event index4, then PFP_SYNC_ME before RELEASE_MEM cache writeback.
+            emit(s,0xc0004600); emit(s,0x407); emit(s,0xc0004200); emit(s,0);
+        }
         return publish(io,s,r);
     }
     static Status stop(const Io& io,State& s,const PollOptions& p,Result& r) {
@@ -208,12 +225,48 @@ struct Access {
             !store(io,s.regs_[Active],0,r) || !rmw(io,s.regs_[Doorbell],0x40000000,0,r))return fault(s,r,r.status);
         s.retain_=false; s.phase_=Phase::Stopped; r.stage=Stage::Complete; return finish(s,r,Status::Ok);
     }
+    static Status checkIdleCompletion(const Io& io,State& s,const PollOptions& p,Result& r) {
+        r=Result{}; r.stage=Stage::Preflight;
+        if(s.pending_ || (s.phase_!=Phase::Running && s.phase_!=Phase::Stopped) || !s.sequence_)
+            return finish(s,r,Status::InvalidState);
+        if(!ioValid(io) || !pollValid(p))return finish(s,r,Status::InvalidArgument);
+        const bool stopped=s.phase_==Phase::Stopped;
+        r.stage=Stage::Guard;
+        if(!match(io,s.regs_[Select],UINT32_MAX,0,r) ||
+            !match(io,s.regs_[Me],0x14000000,stopped?0x14000000:0,r) ||
+            !match(io,s.regs_[Mec],0x7c000000,0x40000000,r,Status::ActiveEngine) ||
+            !match(io,s.regs_[Mes],0x7c000000,0x40000000,r,Status::ActiveEngine) ||
+            !match(io,s.regs_[Active],1,stopped?0:1,r) || !match(io,s.regs_[Active1],1,0,r) ||
+            !match(io,s.regs_[Vmid],UINT32_MAX,0,r) ||
+            !match(io,s.regs_[Doorbell],0x40000000,0,r) ||
+            !match(io,s.regs_[Wp],UINT32_MAX,s.producer_,r) || !match(io,s.regs_[WpHi],UINT32_MAX,0,r) ||
+            !match(io,s.regs_[Base],UINT32_MAX,uint32_t(s.config_.ringGpu>>8),r) ||
+            !match(io,s.regs_[BaseHi],UINT32_MAX,uint32_t(s.config_.ringGpu>>40),r) ||
+            !match(io,s.regs_[RpAddr],UINT32_MAX,uint32_t(s.config_.rptrGpu),r) ||
+            !match(io,s.regs_[RpAddrHi],UINT32_MAX,uint32_t(s.config_.rptrGpu>>32),r) ||
+            !match(io,s.regs_[PollLo],UINT32_MAX,uint32_t(s.config_.wptrGpu),r) ||
+            !match(io,s.regs_[PollHi],UINT32_MAX,uint32_t(s.config_.wptrGpu>>32),r) ||
+            !idle(io,s,p,r))return fault(s,r,r.status);
+        if(!io.syncForCpu(io.context))return fault(s,r,Status::SyncFailed);
+        r.fenceValue=*s.memory_.fence; r.observedRptr=*s.memory_.rptr;
+        if(r.fenceValue!=s.sequence_ || r.observedRptr!=s.producer_)
+            return fault(s,r,Status::PointerCorrupt);
+        r.stage=Stage::Complete; return finish(s,r,Status::Ok);
+    }
 };
+bool State::neverPublished() const {
+    return phase_==Phase::Fresh && !startAttempted_ && !producer_ && !sequence_ && !pending_ && !retain_;
+}
 Status start(const Navi31IpLayout& l,uint64_t bytes,const gfxinit::State& init,const smu::State& smu,
     const Config& c,const Memory& m,const Io& io,const PollOptions& p,State& s,Result& r) { return Access::start(l,bytes,init,smu,c,m,io,p,s,r); }
 Status submitIndirect(const Io& io,State& s,uint64_t gpu,uint32_t words,Result& r) { return Access::submit(io,s,gpu,words,true,r); }
+Status submitIsolatedIndirect(const Io& io,State& s,uint8_t vmid,uint64_t gpu,uint32_t words,Result& r) {
+    if(vmid<1 || vmid>7) { r=Result{};return Access::finish(s,r,Status::InvalidArgument); }
+    return Access::submit(io,s,gpu,words,true,r,vmid);
+}
 Status submitWrite(const Io& io,State& s,uint64_t gpu,uint32_t value,Result& r) { return Access::submit(io,s,gpu,value,false,r); }
 Status waitFence(const Io& io,State& s,const PollOptions& p,Result& r) { return Access::wait(io,s,p,r); }
+Status checkIdleCompletion(const Io& io,State& s,const PollOptions& p,Result& r) { return Access::checkIdleCompletion(io,s,p,r); }
 Status stop(const Io& io,State& s,const PollOptions& p,Result& r) { return Access::stop(io,s,p,r); }
 const char* statusString(Status s) {
     switch(s) {

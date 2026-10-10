@@ -1,0 +1,18 @@
+{
+  "abi_version": 1, "compiler": "Mesa NIR/ACO",
+  "mesa_commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+  "target": "gfx1100", "target_kind": "explicit_offline_compiler_target",
+  "wave_size": 32, "workgroup_size": [64, 1, 1],
+  "code_bytes": 104, "executable_bytes": 84, "code_alignment": 256,
+  "num_sgprs": 108, "num_vgprs": 24, "num_shared_vgprs": 0,
+  "spilled_sgprs": 0, "spilled_vgprs": 0, "lds_bytes": 0, "scratch_bytes_per_wave": 0,
+  "float_mode": 192, "mem_ordered": false, "wgp_mode": true,
+  "compute_pgm_rsrc1": 539754498, "compute_pgm_rsrc2": 1928, "compute_pgm_rsrc3": 0,
+  "dispatch_initiator_required_bits": 32768,
+  "descriptor_binding_mask": 3, "descriptor_set": 0, "descriptor_stride_bytes": 16,
+  "descriptor_format": "GFX11 raw buffer descriptor, byte bounds",
+  "user_sgprs": {"descriptor_table_gpu_va": [0, 1], "push_constants_gpu_va": [2, 3]},
+  "system_sgprs": {"workgroup_x": 4, "workgroup_y": 5, "workgroup_z": 6, "tg_size": 7},
+  "system_vgprs": {"packed_local_invocation_id": 0},
+  "push_constant_bytes": 48, "relocations": [], "constants_bytes": 0
+}

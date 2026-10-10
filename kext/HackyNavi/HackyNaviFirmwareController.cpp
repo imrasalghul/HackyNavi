@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "HackyNaviFirmwareController.hpp"
+#include "HackyNaviDisplayController.hpp"
+#include "HackyNaviPciAccess.hpp"
 #include <IOKit/IOLib.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <libkern/OSAtomic.h>
@@ -21,14 +23,21 @@ bool validPoll(const pspring::PollOptions& p) {
 
 bool HackyNaviFirmwareController::init() {
     lock_ = nullptr; gart_ = nullptr; workspace_ = nullptr;
-    lease_ = hardwareHold_ = false; state_ = State::Empty;
+    lease_ = hardwareHold_ = rlcRetired_ = false; state_ = State::Empty;
     for (auto& slot : slots_) slot = VramAllocation{};
     sosResource_ = FirmwareResource{}; sosImage_ = psp::SosImage{};
     sosLayout_ = psp::Layout{}; ringLayout_ = pspring::Layout{};
     sosResult_ = psp::Result{}; ringResult_ = pspring::Result{};
     pciRevision_ = 0; graphicsFiles_ = gfxfw::Files{};
     graphicsPlan_ = gfxfw::Plan{}; graphicsResult_ = gfxfw::Result{};
+    autoloadRetirementResult_ = gfxinit::Result{};
     smuLayout_ = smu::Layout{}; smuResult_ = smu::Result{};
+    clockScope_ = nullptr; clockRetirementScope_ = nullptr;
+    clockGeneration_ = clockStart_ = clockLast_ = 0;
+    clockBudget_ = 0; clockFailure_ = kIOReturnSuccess; clockRecovery_ = false;
+    taScope_ = nullptr; taRetirementScope_ = nullptr; taGeneration_ = taStart_ = taLast_ = 0;
+    taBudget_ = 0; taFailure_ = kIOReturnSuccess;
+    for (auto& record : displayTaRecords_) record = DisplayTaRecord{};
     displayResource_ = FirmwareResource{}; displayFirmwareResult_ = dmcubfw::Result{};
     if (!OSObject::init()) return false;
     lock_ = IOLockAlloc();
@@ -46,6 +55,7 @@ HackyNaviFirmwareController* HackyNaviFirmwareController::withController(
 }
 IOReturn HackyNaviFirmwareController::initialize(HackyNaviGARTController* gart) {
     if (!gart) return kIOReturnBadArgument;
+    if (!gart->normalAccessReady()) return kIOReturnOffline;
     if (!getFirmwareResource(FirmwareResourceId::PspSos, sosResource_) ||
         psp::parseSosImage(sosResource_.data, sosResource_.bytes, sosImage_) != psp::Status::Ok ||
         !sosImage_.toc.size || (sosImage_.toc.size & 3) || sosImage_.toc.size > kPayloadBytes)
@@ -63,7 +73,9 @@ IOReturn HackyNaviFirmwareController::initialize(HackyNaviGARTController* gart) 
     if (gart_->firmwareOwner_ || gart_->queueOwner_ || gart_->displayOwner_) return finish(kIOReturnBusy);
     if (gart_->state_ != HackyNaviGARTController::State::MmEnabled ||
         !gart_->hdpState_.configured()) return finish(kIOReturnNotReady);
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     pciRevision_ = gart_->device_->configRead8(0x08);
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     const FirmwareResourceId ids[] = {FirmwareResourceId::Smu, FirmwareResourceId::Sdma,
         FirmwareResourceId::GcPfp, FirmwareResourceId::GcMe, FirmwareResourceId::GcMec,
         FirmwareResourceId::GcImu, FirmwareResourceId::GcRlc};
@@ -85,35 +97,27 @@ IOReturn HackyNaviFirmwareController::initialize(HackyNaviGARTController* gart) 
     const uint64_t bytes[Payload + 1] = {psp::kStagingBytes, 4096, 4096, 4096, kPayloadBytes};
     for (unsigned i = SosStage; i <= Payload; ++i) {
         const uint64_t alignment = i == SosStage ? psp::kStagingBytes : 4096;
+        if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
         if (gart_->allocator_.allocate(bytes[i], alignment, slots_[i]) != VramAllocatorStatus::Ok)
             return finish(kIOReturnNoSpace);
     }
     state_ = State::Prepared;
-    return finish(kIOReturnSuccess);
+    return finish(gart_->normalAccessReady()?kIOReturnSuccess:kIOReturnOffline);
 }
 bool HackyNaviFirmwareController::providerReady() const {
-    if (!lease_ || !gart_ || gart_->firmwareOwner_ != this || !gart_->device_ ||
+    if (!lease_ || !gart_ || !gart_->accessReady() || gart_->firmwareOwner_ != this || !gart_->device_ ||
         !gart_->openOwner_ || !gart_->registers_ || !gart_->hdpState_.configured() ||
         (gart_->state_ != HackyNaviGARTController::State::MmEnabled &&
-         gart_->state_ != HackyNaviGARTController::State::BothEnabled) ||
-        gart_->device_->isInactive() || !gart_->device_->isOpen(gart_->openOwner_) ||
-        gart_->device_->configRead32(0) != 0x744c1002 ||
-        gart_->device_->configRead8(0x08) != pciRevision_) return false;
-    const UInt16 command = gart_->device_->configRead16(kIOPCIConfigCommand);
-    if (command == 0xffff || (command & 6) != 6) return false;
-    UInt8 pm = 0;
-    if (gart_->device_->findPCICapability(1, &pm)) {
-        if (pm < 0x40 || pm > 0xf8 || (pm & 3)) return false;
-        const UInt16 power = gart_->device_->configRead16(pm + 4);
-        if (power == 0xffff || (power & 3)) return false;
-    }
-    return true;
+         gart_->state_ != HackyNaviGARTController::State::BothEnabled)) return false;
+    return nativepci::ready(gart_->device_, gart_->openOwner_, nativepci::BusMaster::Enabled) &&
+        gart_->device_->configRead8(0x08) == pciRevision_ && gart_->accessReady();
 }
 IOReturn HackyNaviFirmwareController::begin(State expected) {
     IOLockLock(lock_);
     if (!gart_) { IOLockUnlock(lock_); return kIOReturnNotReady; }
     IOLockLock(gart_->lock_);
     if (state_ != expected) return finish(kIOReturnNotReady);
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     if (!providerReady()) return finish(kIOReturnOffline);
     gart_->mmioActive_ = true;
     return kIOReturnSuccess; // Both locks remain held.
@@ -153,7 +157,7 @@ bool HackyNaviFirmwareController::beforeReadback(void* context) {
     // mapping. Serialize the CPU before that ordered native read sequence.
     __asm__ __volatile__("mfence" ::: "memory");
     OSSynchronizeIO();
-    return true;
+    return self->gart_->accessReady();
 }
 void HackyNaviFirmwareController::delayUs(void*, uint32_t us) { IODelay(us); }
 void HackyNaviFirmwareController::delayMs(void*, uint32_t ms) { IOSleep(ms); }
@@ -224,6 +228,7 @@ IOReturn HackyNaviFirmwareController::initializeTmr(const pspring::PollOptions& 
     const uint64_t requested = ring_.requiredTmrBytes();
     IOLog("HackyNavi: PSP TOC requested TMR bytes=%u\n", static_cast<unsigned>(requested));
     if (!requested || requested > (64U << 20) || (requested & 4095)) return fault();
+    if (!gart_->normalAccessReady()) return finish(kIOReturnOffline);
     if (gart_->allocator_.allocate(requested, kTmrAlignment, slots_[Tmr]) != VramAllocatorStatus::Ok)
         return finish(kIOReturnNoSpace); // Ring is idle; no TMR address was published.
     if (pspring::submitSetupTmr(ringIo(), ring_, slots_[Tmr].handle, ringResult_) != pspring::Status::Ok ||
@@ -233,6 +238,9 @@ IOReturn HackyNaviFirmwareController::initializeTmr(const pspring::PollOptions& 
     return finish(kIOReturnSuccess);
 }
 IOReturn HackyNaviFirmwareController::releaseAllocationsLocked() {
+    // Neither PSP teardown nor the older MODE1 call contract establishes
+    // retirement of a separately published SMU table or clock constraint.
+    if (clocks_.retentionRequired()) return kIOReturnBusy;
     for (unsigned index = SlotCount; index > 0; --index) {
         auto& slot = slots_[index - 1];
         if (slot.handle.owner) {
@@ -299,19 +307,81 @@ bool HackyNaviFirmwareController::loadedFirmware(uint32_t type, gfxfw::LoadedSeg
     IOLockUnlock(lock_);
     return false;
 }
+IOReturn HackyNaviFirmwareController::retireAutoloadRlc(
+    HackyNaviFunctionGroup::RetirementScope& scope,const gfxinit::RetirementPollOptions& poll) {
+    if (!poll.iterations || poll.iterations > 1000000 || !poll.intervalUs || poll.intervalUs > 1000 ||
+        uint64_t(poll.iterations) * poll.intervalUs > 10000000) return kIOReturnBadArgument;
+    IOLockLock(lock_);
+    if (!gart_) { IOLockUnlock(lock_); return kIOReturnNotReady; }
+    IOLockLock(gart_->lock_);
+    if (state_ != State::FirmwareLoaded || !hardwareHold_ || !lease_ || rlcRetired_ ||
+        autoloadRetirement_.attempted() || !graphics_.autoloadComplete() || !smu_.awake() ||
+        gart_->state_ != HackyNaviGARTController::State::BothEnabled || !gart_->firmwareReady_)
+        return finish(kIOReturnNotReady);
+    if (gart_->queueOwner_ || gart_->displayOwner_ || gart_->hasVmOwners() ||
+        gart_->vmRetirementActive_ || gart_->vmRetirementFailure_ != kIOReturnSuccess ||
+        displayFirmware_.needsRuntimeRetention()) return finish(kIOReturnBusy);
+    if (gart_->normalAccessReady() || !scope.matchesGraphics(gart_->device_,gart_->openOwner_) ||
+        !providerReady()) return finish(kIOReturnOffline);
+    if (ring_.phase() != pspring::Phase::Running || ring_.pending() || !ring_.tmrReady() ||
+        !ring_.needsRingRetention() || !ring_.needsTmrRetention()) return finish(kIOReturnNotReady);
+    // The real allocator/PSP bindings remain live throughout the physical
+    // retirement. No caller-supplied handles or CPU state reconstruct them.
+    for (unsigned i = SosStage; i <= Tmr; ++i) {
+        VramRange range{};
+        if (gart_->allocator_.lookup(slots_[i].handle,range) != VramAllocatorStatus::Ok ||
+            range.offset != slots_[i].range.offset || range.bytes != slots_[i].range.bytes || !range.bytes)
+            return finish(kIOReturnNotReady);
+    }
+    gart_->firmwareReady_ = false;
+    gart_->mmioActive_ = true;
+    const gfxinit::RetirementIo io = {this,read32,write32,delayUs};
+    const auto status = gfxinit::retireAutoloadRlc(gart_->ipLayout_,gart_->registerBytes_,graphics_,smu_,
+        io,poll,autoloadRetirement_,autoloadRetirementResult_);
+    IOLog("HackyNavi: no-queue RLC retirement status=%s stage=%u reads=%u writes=%u attempted=%u complete=%u\n",
+        gfxinit::statusString(status),static_cast<unsigned>(autoloadRetirementResult_.stage),
+        autoloadRetirementResult_.reads,autoloadRetirementResult_.writes,
+        autoloadRetirement_.attempted(),autoloadRetirement_.complete());
+    if (status != gfxinit::Status::Ok || !autoloadRetirement_.complete() ||
+        !scope.matchesGraphics(gart_->device_,gart_->openOwner_) || !providerReady()) return fault();
+    rlcRetired_ = true; state_ = State::Quiesced;
+    return finish(kIOReturnSuccess);
+}
 IOReturn HackyNaviFirmwareController::retireAfterQuiescence(const pspring::PollOptions& poll) {
     if (!validPoll(poll)) return kIOReturnBadArgument;
     IOLockLock(lock_);
     if (!gart_) { IOLockUnlock(lock_); return kIOReturnNotReady; }
     IOLockLock(gart_->lock_);
     if (state_ == State::Retired) return finish(kIOReturnSuccess);
+    // The explicit scoped TA retirement must finish before generic PSP/TMR
+    // teardown. Never bypass a typed lease or its retained native Display.
+    if (displayTa_.retentionRequired()) return finish(kIOReturnBusy);
+    for (const auto& record : displayTaRecords_) if (record.owner) return finish(kIOReturnBusy);
     if (gart_->queueOwner_ || gart_->displayOwner_ || displayFirmware_.needsRuntimeRetention())
         return finish(kIOReturnBusy);
     gart_->firmwareReady_ = false;
     if (hardwareHold_) {
         if (state_ == State::FaultedRetained || state_ == State::SosLoaded ||
             !providerReady()) return finish(kIOReturnNotReady);
+        // Quiesced can also be reached by clock retirement; only completed
+        // physical RLC retirement permits destruction of loaded firmware/TMR.
+        if (graphics_.autoloadComplete() && !rlcRetired_) return finish(kIOReturnNotReady);
         gart_->mmioActive_ = true;
+        // Every typed display lease and queue/display consumer has retired.
+        // A standalone loaded TA still retires only its actual returned ID.
+        // Ambiguous loads/unloads remain sealed for reset recovery.
+        const pspta::Kind kinds[] = {pspta::Kind::Hdcp,pspta::Kind::Dtm};
+        for (const auto kind : kinds) {
+            pspring::TaInformation ta{};
+            if (!ring_.taInformation(kind,ta)) return fault();
+            if (!ta.retained) continue;
+            if (ta.phase != pspring::TaPhase::Loaded || !ta.sessionValid ||
+                pspring::submitUnloadTa(ringIo(),ring_,kind,ringResult_) != pspring::Status::Ok ||
+                pspring::wait(ringIo(),ring_,poll,ringResult_) != pspring::Status::Ok ||
+                !ring_.taInformation(kind,ta) || ta.phase != pspring::TaPhase::Retired ||
+                ta.retained || !ta.unloadAcknowledged)
+                return fault();
+        }
         if (ring_.needsTmrRetention()) {
             if (!ring_.tmrReady() ||
                 pspring::submitDestroyTmr(ringIo(), ring_, ringResult_) != pspring::Status::Ok ||
@@ -319,7 +389,7 @@ IOReturn HackyNaviFirmwareController::retireAfterQuiescence(const pspring::PollO
                 return fault();
         }
         if (pspring::stop(ringIo(), ring_, poll, ringResult_) != pspring::Status::Ok ||
-            ring_.needsRingRetention() || ring_.needsTmrRetention()) return fault();
+            ring_.needsRingRetention() || ring_.needsTmrRetention() || ring_.needsTaRetention()) return fault();
     }
     const IOReturn result = releaseAllocationsLocked();
     if (result != kIOReturnSuccess) return finish(result);
@@ -333,6 +403,7 @@ IOReturn HackyNaviFirmwareController::releaseAfterDeviceReset() {
     IOLockLock(lock_);
     if (!gart_) { IOLockUnlock(lock_); return kIOReturnNotReady; }
     IOLockLock(gart_->lock_);
+    if (hardwareHold_ && !gart_->accessReady()) return finish(kIOReturnOffline);
     if (gart_->queueOwner_ || gart_->displayOwner_) return finish(kIOReturnBusy);
     const IOReturn result = releaseAllocationsLocked();
     if (result != kIOReturnSuccess) return finish(result);
@@ -340,7 +411,16 @@ IOReturn HackyNaviFirmwareController::releaseAfterDeviceReset() {
     // across reset epochs. Create a new owner for subsequent startup.
     state_ = State::Retired;
     const bool dropHold = hardwareHold_; hardwareHold_ = false;
+    HackyNaviDisplayController* dropDisplays[pspdisplayta::kDisplays]{};
+    for (size_t i = 0; i < pspdisplayta::kDisplays; ++i) {
+        dropDisplays[i] = displayTaRecords_[i].owner;
+        displayTaRecords_[i] = DisplayTaRecord{};
+    }
     finish(kIOReturnSuccess);
+    // Display reset retirement already cleared its GART lease. Never release
+    // these retained objects under Firmware/GART locks: their final release
+    // may enter descendant teardown. The portable State stays sealed.
+    for (auto* display : dropDisplays) if (display) display->release();
     if (dropHold) release();
     return kIOReturnSuccess;
 }

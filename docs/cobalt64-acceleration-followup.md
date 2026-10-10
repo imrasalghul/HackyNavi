@@ -1,0 +1,54 @@
+# Cobalt64 acceleration follow-up, 2026-10-11
+
+The owner's [reply in issue 4](https://github.com/Almosst-DEV/Cobalt64/issues/4) is useful architecture and integration evidence. It does not provide a ready Navi 31 driver or establish that a public clean build accelerates arbitrary applications. The owner describes a bring-up kext, an auxiliary accelerator kext, a Metal/RADV bundle and a post-boot display handoff on one machine. The same reply identifies fixed monitor modes and an omitted Apple-derived shader cache; the replacement translation path has not been verified from a clean checkout by the author.
+
+The issue was read on GitHub and the public repository checked with `git ls-remote` on 2026-10-11. Both `HEAD` and `refs/heads/main` still identify **`d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65`**, which is the existing clean `.research/Cobalt64` checkout. Thus this reply adds useful context to the code already available here; no newer implementation was discovered. The earlier [audit](cobalt64-audit.md) remains historical evidence, including its older HackyNavi progress descriptions.
+
+## Most actionable difference: native clients through the accelerator
+
+Cobalt's [Navi48Accel.cpp:501](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/tools/native/navi48accel/src/Navi48Accel.cpp#L501) implements `newUserClient` for its private native client type on the actual accelerator service. A versioned operations table delegates client creation to the existing bring-up owner. Other client types follow the family route. The implementation checks the active context and fails closed if the hook or capability is absent. [Navi48Device.m:231](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/tools/native/navi48metal/Navi48Device.m#L231) opens the accelerator port provided to the bundle, and line 513 selects the accelerator service for the RADV transport in admitted applications. The source explains that this route accommodates application sandbox rules allowing accelerator clients.
+
+HackyNavi currently differs in three concrete places:
+
+- `HackyNaviAccelerator::newUserClient` rejects every request.
+- `HNMetalDevice` authenticates the accelerator/provider relationship, then opens `Context::openBufferedGraphics(ownerID, ...)`.
+- `Client::openProfile` enumerates `HackyNaviDevice` and opens that owner service.
+
+This is a credible future application-access issue, **not an observed sandbox denial on the target** and not the explanation for an absent loaded kext. The target's actual sandbox behavior remains untested. The useful next adaptation is an explicit accelerator-port transport entry point backed by the same existing owner/session. Preserve the caller task check, exact private client type, real provider identity, owner registry ID in negotiation, current device operation and retirement rules. Do not introduce a second PCI or VM owner. Do not switch to class-name-only selection or borrow Cobalt's process-name allow-list as authorization. Verify the actual target client-open result before claiming sandboxed application compatibility.
+
+## Bundle discovery and the confirmed early-loading split
+
+Cobalt's [accelerator personality](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/tools/native/navi48accel/Info.plist#L55) supplies `MetalPluginName` and `MetalPluginClassName`. HackyNavi already publishes these from its real `IOAccelerator` child. Its [measured loader contract](metal-loader-contract.md), [bundle trust investigation](metal-bundle-trust.md), and [accelerator service](metal-accelerator-service.md) cover the corresponding macOS 15.8 mechanism.
+
+The user's exact USB OpenCore log now establishes why a split is needed for **HackyNavi's present early OpenCore deployment**. In `build/target-evidence/live-c39afcee43f9-20261011-144146-771/opencore/opencore-2026-10-11-143848.txt`, lines 688-690 report that `IOGraphicsFamily` is absent from Boot KC, vtable patching fails for HackyNavi, and injection returns `Invalid Parameter`. The file SHA-256 is `9d043799e2069ba0668c8206c10fb2fa4c89c6411c5723b753ec7bcf31222c3c`. This explains why the requested boot argument is present but neither observer nor device service is loaded: the monolithic executable's `IOAccelerator` inheritance introduces a dependency the early prelinker cannot resolve. Earlier no-load dependency checks against the full installed system did not test that boot collection.
+
+Cobalt's auxiliary-kext separation is therefore directly useful. The implemented direction is to keep the hardware owner in the early boot core and move the `IOAccelerator` subclass into a separately late-loaded bundle, connected through public `IOService` dispatch. Readiness must come from the actual verified engine owner, and publication must remain protected against retirement. The split must not restore a hard core-to-accelerator C++ symbol dependency.
+
+This is a deployment requirement established for the captured Boot KC, not a requirement of Metal's device protocol or proof that HackyNavi needs Cobalt's private family. The measured loader accepts an actual `_MTLDevice` subclass. Cobalt instead subclasses `MTLIOAccelDevice` and uses `IOGraphicsAccelerator2`, generated declarations, private field offsets, and runtime class-size/vtable checks. Its display-family integration is a useful research map, but those declarations and offsets cannot establish the macOS 15.8.1 ABI.
+
+The issue's security settings are the author's environment report, not an instruction to change this machine. No setting was changed or installation attempted during this audit. A successful bundle lookup would still not prove executable loading, device construction, shader execution or presentation.
+
+## The source compiler blocker is not solved by this code
+
+[Navi48Device.m:6264](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/tools/native/navi48metal/Navi48Device.m#L6264) returns feature profile `10000`, explicitly taken from AppleParavirtDevice, and compiler version `32023`. It does not supply an independently established feature-profile contract for HackyNavi's implemented capabilities. The [existing measured source-compiler audit](metal-runtime-source-compiler-audit.md) shows why selecting a numeric profile solely to obtain a compiler version is insufficient: the profile has other consumers.
+
+Cobalt's [n48_xlate.h:578](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/tools/native/navi48metal/n48_xlate.h#L578) opens an installed LLVM bitcode reader, converts real AIR bitcode to LLVM text, and loads a separate `libn48xlate.dylib` with versioned C entry points. This is **AIR-to-SPIR-V translation**, not an implementation of MSL source compilation. Its useful general mechanisms are bounded inputs, explicit library ABI, ownership-matched result release, and cache keys that include translator/reader identity, OS version and linked dependency identities. These can inform later shader breadth and caching work without copying the borrowed device profile.
+
+The public Metal build script expects externally built RADV and translator libraries and copies `spvcache` entries that are absent from the checkout. Its fallback render and compute paths noted in the original audit remain present. Neither a fallback shader nor a cache hit should count as correct execution of the requested shader. HackyNavi's own genuine Apple-generated AIR/metallib and exact GPU readback tests remain the relevant acceptance evidence; macOS execution is still outstanding.
+
+## Display handoff and presentation: reusable design, incompatible fixed modes
+
+[n48-autoarm.sh](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/tools/pc/autoarm/n48-autoarm.sh#L153) checks a fixed DP raster, programs particular HDMI paths, measures per-display CRCs, holds and publishes framebuffers, publishes the Metal nub, adopts display pipes and arms them before one WindowServer restart. The hold/publication boundary is treated as irreversible for that boot. This is a staged ownership handoff, not a magic acceleration boot argument. Its mode constants, connector numbers, register addresses, class-name replacement and private pipe offset are not applicable proof for Navi 31/DCN 3.2 or the user's 4K165 HDMI display. The script was not run.
+
+Two more portable presentation ideas are worth retaining for the future actual scanout implementation:
+
+- [n48_m6route.h](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/tools/native/navi48metal/n48_m6route.h#L1) maps IOSurface identity to the display pipe from real transactions, with versioned generations and rejection of unknown or ambiguous destinations. Matching surface dimensions alone can route a frame to the wrong monitor.
+- [n48_dispflip.h](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/tools/native/navi48metal/n48_dispflip.h#L97) permits presentation after successful GPU completion and rejects stale or superseded submissions. Slot lifetime and dependencies remain tracked across failure. Shader-name rules such as its `GPUPass` classification are WindowServer-specific heuristics, not a general completed-frame contract.
+
+HackyNavi should first prove offscreen native submission and real Metal readback, then implement its own owned IOSurface/presentation path and EDID-derived display modes. Cobalt's private display object graph can guide targeted ABI measurements when that path is required; directly transplanting its aux kext or autoarm sequence would not complete the driver.
+
+## Reuse and next work
+
+The repository's main [license](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/LICENSE) is MIT. Its [third-party notices](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/third-party/THIRD-PARTY-LICENSES.txt) also cover BSD-3-Clause discovery code and separately licensed components. The translator changes and separate library are [LGPL-3.0-or-later](https://github.com/Almosst-DEV/Cobalt64/blob/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65/third-party/metal2vulkan-n48/NOTICE); they are not MIT kernel code. This follow-up copies no implementation, Apple-derived cache or binary.
+
+Priority order from this review: resolve the current c39 kext loading failure; prove engine and offscreen Metal execution; add the native accelerator-client route for actual applications; then complete IOSurface ownership and presentation with Navi 31 display control. The compiler's truthful feature profile remains a separate unresolved requirement for MSL source input. This audit creates no new hardware-validation claim.

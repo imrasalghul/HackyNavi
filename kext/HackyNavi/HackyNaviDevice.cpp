@@ -22,6 +22,10 @@
 // SOFTWARE.
 
 #include "HackyNaviDevice.hpp"
+#include "HackyNaviPciAccess.hpp"
+#include "HackyNaviReadCapture.hpp"
+#include <hackynavi/boot_display_capture.hpp>
+#include "HackyNaviLifecycleController.hpp"
 #include <hackynavi/device_discovery.hpp>
 #include <hackynavi/discovery.hpp>
 #include <IOKit/IOLib.h>
@@ -37,6 +41,7 @@
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
 #include <pexpert/pexpert.h>
+#include <kern/debug.h>
 
 #if !defined(__x86_64__)
 #error HackyNaviDevice currently supports Intel x86_64 only
@@ -50,6 +55,8 @@ constexpr unsigned kInventoryLimit = 256;
 // Conservative mapping bound for this experiment, not a probed BAR size.
 constexpr IOByteCount kRegisterMapLimit = 16U * 1024U * 1024U;
 constexpr IOByteCount kRequiredRegisterBytes = 0x16061U * 4U + 4U;
+constexpr uint32_t kCapturePowerRevoked = 1U;
+constexpr uint32_t kCaptureTerminalRevoked = 2U;
 // PCI power is provided by the parent. Our off state gates all MMIO before
 // acknowledging the transition; our on state requires an already-powered
 // parent. This currently owns no submitted GPU work or hardware GART roots.
@@ -84,7 +91,7 @@ bool string(OSDictionary* dictionary, const char* key, const char* value) {
 // Read configuration only. No power transition, decode enable, or bus-master
 // enable is attempted. Revision 0xff and all-ones fields are unavailable.
 bool validateConfiguration(IOPCIDevice* device, UInt32& revisionClass,
-                           UInt16& command, UInt8& header) {
+                           UInt16& command, UInt8& header, bool requirePowered = true) {
     if (!device || device->isInactive() || device->configRead32(0x00) != kIdentity)
         return false;
     revisionClass = device->configRead32(0x08);
@@ -92,16 +99,21 @@ bool validateConfiguration(IOPCIDevice* device, UInt32& revisionClass,
     command = device->configRead16(kIOPCIConfigCommand);
     if (revisionClass == 0xffffffffU || (revisionClass & 0xffU) == 0xffU ||
         (revisionClass >> 24) != 0x03 || (header & 0x7fU) != 0 ||
-        command == 0xffffU || !(command & 0x2U)) return false;
+        command == 0xffffU || (requirePowered && !(command & 0x2U))) return false;
 
-    // A PM capability, if present, must already report D0. This snapshot is
-    // not a power-management lease and cannot exclude an external transition.
+    // Matching/start can occur before the PM parent has supplied D0. They may
+    // identify the function but must not depend on MMIO decode being enabled.
+    if (!requirePowered) return device->configRead32(0x00) == kIdentity;
+
+    // This exact profile requires a readable PM capability already in D0.
+    // Use a bounded read-only walk; a convenience-helper failure cannot mean
+    // that the capability is absent. This remains an observation, not a lease.
     UInt8 pmOffset = 0;
-    if (device->findPCICapability(0x01, &pmOffset)) {
-        if (pmOffset < 0x40 || pmOffset > 0xf8 || (pmOffset & 3U)) return false;
-        const UInt16 power = device->configRead16(pmOffset + 4);
-        if (power == 0xffffU || (power & 3U) != 0) return false;
-    }
+    UInt16 pmHeader = 0;
+    if (!hackynavi::nativepci::readCapability(device,1,pmOffset,pmHeader)||pmOffset>0xf8)
+        return false;
+    const UInt16 power = device->configRead16(pmOffset + 4);
+    if (power == 0xffffU || (power & 3U) != 0 ||device->configRead16(pmOffset)!=pmHeader) return false;
     return device->configRead32(0x00) == kIdentity;
 }
 
@@ -149,6 +161,17 @@ void appendIp(const hackynavi::DiscoveryIp& ip, void* context) {
 
 bool HackyNaviDevice::init(OSDictionary* properties) {
     lock_ = nullptr;
+    captureCall_ = nullptr;
+    capturePending_ = false;
+    captureSelfHeld_ = false;
+    engineMode_=groupCreationAttempted_=engineAttempted_=false;
+    engineNotificationSerial_=0;functionGroup_=nullptr;lifecycle_=nullptr;accelerator_=nullptr;
+    acceleratorReady_=false;
+    acceleratorGeneration_=0;
+    captureRevocations_ = kCapturePowerRevoked;
+    powerGeneration_ = 0;
+    captureStage_ = "NotStarted";
+    engineCaptureScope_ = nullptr;
     pci_ = nullptr;
     registerMap_ = nullptr;
     registers_ = nullptr;
@@ -162,6 +185,9 @@ bool HackyNaviDevice::init(OSDictionary* properties) {
     acquisitionActive_ = false;
     memoryCaptureActive_ = false;
     displayCaptureActive_ = false;
+    displayContextCaptureActive_ = false;
+    displayContextGeneration_ = 0;
+    displayContextAccessFailure_ = nullptr;
     romCaptureActive_ = postedCaptureActive_ = auxCaptureActive_ = false;
     postedRegisterOffsets_[0] = postedRegisterOffsets_[1] = 0;
     runtimeRom_ = nullptr;
@@ -182,10 +208,19 @@ bool HackyNaviDevice::init(OSDictionary* properties) {
     hdpLayout_ = hackynavi::HdpLayout{};
     displayLayout_ = hackynavi::bootdisplay::Layout{};
     displayCapture_ = hackynavi::bootdisplay::Capture{};
+    displayContextLayout_ = hackynavi::bootdisplaycontext::Layout{};
+    displayContextCapture_ = hackynavi::bootdisplaycontext::Capture{};
     if (!IOService::init(properties)) return false;
     registryReady_ = true;
     lock_ = IOLockAlloc();
-    return lock_ != nullptr;
+    if (!lock_) return false;
+    // Acquisition can sleep and read thousands of words. Do not put it on the
+    // default high-priority callout group. ONCE also prevents overlapping
+    // invocations and makes cancel_wait drain an in-flight callback even when
+    // it cancels a pending requeue (XNU thread_call.c:thread_call_cancel_wait).
+    captureCall_ = thread_call_allocate_with_options(captureThread, this,
+        THREAD_CALL_PRIORITY_KERNEL, THREAD_CALL_OPTIONS_ONCE);
+    return captureCall_ != nullptr;
 }
 
 IOService* HackyNaviDevice::probe(IOService* provider, SInt32* score) {
@@ -195,12 +230,14 @@ IOService* HackyNaviDevice::probe(IOService* provider, SInt32* score) {
     UInt32 revisionClass = 0;
     UInt16 command = 0;
     UInt8 header = 0;
-    if (!validateConfiguration(device, revisionClass, command, header))
+    if (!validateConfiguration(device, revisionClass, command, header, false))
         return nullptr;
     return IOService::probe(provider, score);
 }
 
 bool HackyNaviDevice::mapRegisters() {
+    if (!powerAvailable_ || !pmInitialized_ || stopping_ || isInactive() || !opened_ ||
+        !pci_ || pci_->isInactive() || registerMap_) return false;
     // BAR5 must be its own assigned 32-bit memory BAR. Never size it by writing
     // config space, and never interpret the upper half of a 64-bit BAR as BAR5.
     const UInt32 bar4 = pci_->configRead32(kIOPCIConfigBaseAddress4);
@@ -208,27 +245,47 @@ bool HackyNaviDevice::mapRegisters() {
     if (bar4 == 0xffffffffU || (!(bar4 & 1U) && (bar4 & 6U) == 4U) ||
         bar5 == 0xffffffffU || (bar5 & 7U) != 0 || (bar5 & ~UInt32(15)) == 0)
         return false;
-    IODeviceMemory* memory = pci_->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress5);
+    hackynavi::nativepci::AssignedMemory memory(pci_,kIOPCIConfigBaseAddress5);
     if (!memory || memory->getPhysicalAddress() != (bar5 & ~UInt32(15)) ||
         memory->getLength() < kRequiredRegisterBytes ||
         memory->getLength() > kRegisterMapLimit) return false;
-    // The descriptor belongs to the provider; retain only the returned map.
-    registerMap_ = memory->map(kIOMapInhibitCache);
-    if (!registerMap_) return false;
-    registerBytes_ = registerMap_->getLength();
-    const IOVirtualAddress address = registerMap_->getVirtualAddress();
-    if (!address || (address & 3U) || registerBytes_ < kRequiredRegisterBytes ||
-        registerBytes_ > kRegisterMapLimit) return false;
+    // The property descriptor is retained by the stack helper while mapping.
+    IOMemoryMap* map = memory->map(kIOMapInhibitCache);
+    if (!map) return false;
+    const IOByteCount bytes = map->getLength();
+    const IOVirtualAddress address = map->getVirtualAddress();
+    if (!address || (address & 3U) || bytes < kRequiredRegisterBytes ||
+        bytes > kRegisterMapLimit || map->getPhysicalAddress() != (bar5 & ~UInt32(15))) {
+        map->release();
+        return false;
+    }
+    registerMap_ = map;
+    registerBytes_ = bytes;
     registers_ = reinterpret_cast<volatile uint32_t*>(address);
     return true;
 }
 
+void HackyNaviDevice::unmapRegistersLocked() {
+    // Diagnostic transactions hold lock_. Engine mode must complete paired
+    // retirement outside this mutex before reaching teardown/unmap.
+    registers_ = nullptr;
+    registerBytes_ = 0;
+    IOMemoryMap* map = registerMap_;
+    registerMap_ = nullptr;
+    if (map) map->release();
+    if (registryReady_) setProperty("RegisterBytes", UInt64(0), 64);
+}
+
+bool HackyNaviDevice::captureEpochValid() const {
+    return !captureRevoked() && !stopping_ && !isInactive() && powerAvailable_ &&
+        pmInitialized_ && opened_ && pci_ && !pci_->isInactive() &&
+        (!engineMode_ || (engineCaptureScope_ && engineCaptureScope_->matchesGraphics(pci_,
+            const_cast<HackyNaviDevice*>(this))));
+}
 bool HackyNaviDevice::accessAllowed(uint32_t offset) const {
-    return (acquisitionActive_ || memoryCaptureActive_ || displayCaptureActive_ ||
+    return (acquisitionActive_ || memoryCaptureActive_ || displayCaptureActive_ || displayContextCaptureActive_ ||
         romCaptureActive_ || postedCaptureActive_ || auxCaptureActive_) &&
-        !stopping_ && powerAvailable_ &&
-        pmInitialized_ && opened_ && pci_ &&
-        !pci_->isInactive() && registers_ && (offset & 3U) == 0 &&
+        captureEpochValid() && registers_ && (offset & 3U) == 0 &&
         registerBytes_ >= 4 && offset <= registerBytes_ - 4;
 }
 
@@ -250,6 +307,14 @@ bool HackyNaviDevice::read32(void* context, uint32_t offset, uint32_t& value) {
         for(size_t i=0;i<hackynavi::coldaux::kJpegRegisters;++i)allowed=allowed || offset==l.jpeg[i];
         for(size_t i=0;i<hackynavi::coldaux::kLsdmaRegisters;++i)allowed=allowed || offset==l.lsdma[i];
         if(!l.valid || !allowed)return false;
+    } else if (self->displayContextCaptureActive_) {
+        const auto& layout = self->displayContextLayout_;
+        bool allowed = false;
+        for (size_t p = 0; p < hackynavi::bootdisplaycontext::kPipeCount; ++p)
+            allowed = allowed || offset == layout.power[p] || offset == layout.powerConfig[p];
+        for (size_t i = 0; i < hackynavi::bootdisplaycontext::kRegisterCount; ++i)
+            allowed = allowed || offset == layout.registers[i];
+        if (!layout.valid || !allowed || !bootDisplayContextAccessValid(self)) return false;
     } else if (self->displayCaptureActive_) {
         // The complete DCN layout was resolved and bounded before this stage.
         // It admits reads only; the selector-write callback is unavailable.
@@ -286,7 +351,7 @@ bool HackyNaviDevice::read32(void* context, uint32_t offset, uint32_t& value) {
     value = self->registers_[offset / 4];
     OSSynchronizeIO();
     __asm__ __volatile__("" ::: "memory");
-    return true;
+    return self->captureEpochValid();
 }
 
 bool HackyNaviDevice::write32(void* context, uint32_t offset, uint32_t value) {
@@ -303,7 +368,7 @@ bool HackyNaviDevice::write32(void* context, uint32_t offset, uint32_t value) {
     self->registers_[offset / 4] = value;
     OSSynchronizeIO();
     __asm__ __volatile__("" ::: "memory");
-    return true;
+    return self->captureEpochValid();
 }
 
 void HackyNaviDevice::delayUs(void*, uint32_t microseconds) {
@@ -313,6 +378,7 @@ void HackyNaviDevice::delayUs(void*, uint32_t microseconds) {
 }
 
 bool HackyNaviDevice::captureDiscovery() {
+    captureStageLocked("DiscoveryAcquisition");
     if (discoveryBytes_) return false;
     auto* buffer = static_cast<uint8_t*>(IOMalloc(hackynavi::kDeviceDiscoveryMaxBytes));
     if (!buffer) return false;
@@ -323,6 +389,19 @@ bool HackyNaviDevice::captureDiscovery() {
     const auto acquired = hackynavi::acquireDeviceDiscovery(io, options, buffer,
         hackynavi::kDeviceDiscoveryMaxBytes, capture);
     acquisitionActive_ = false;
+    // Keep transport failure details independently of the validated snapshot.
+    // No hardware addresses in this historical record confer access authority.
+    OSDictionary* acquisition = OSDictionary::withCapacity(7);
+    if (acquisition) {
+        const bool recorded = string(acquisition, "Status", hackynavi::deviceDiscoveryStatusString(acquired)) &&
+            number(acquisition, "BytesCopied", capture.bytesCopied, 64) &&
+            number(acquisition, "ReadyPolls", capture.readyPolls) &&
+            number(acquisition, "SourceVRAMOffset", capture.sourceOffset, 64) &&
+            acquisition->setObject("SelectorWritesAttempted", capture.selectorWritesAttempted ? kOSBooleanTrue : kOSBooleanFalse) &&
+            setProperty("DiscoveryAcquisition", acquisition);
+        if (!recorded) IOLog("HackyNaviDevice: acquisition diagnostic publication failed\n");
+        acquisition->release();
+    }
     if (acquired != hackynavi::DeviceDiscoveryStatus::Ok) {
         IOLog("HackyNaviDevice: acquisition failed: %s; bytes=%llu; selector writes attempted=%u\n",
               hackynavi::deviceDiscoveryStatusString(acquired),
@@ -331,6 +410,7 @@ bool HackyNaviDevice::captureDiscovery() {
         IOFree(buffer, hackynavi::kDeviceDiscoveryMaxBytes);
         return false;
     }
+    captureStageLocked("DiscoveryParsingAndLayout");
     OSArray* entries = OSArray::withCapacity(64);
     OSDictionary* report = OSDictionary::withCapacity(24);
     if (!entries || !report) {
@@ -385,10 +465,17 @@ bool HackyNaviDevice::captureDiscovery() {
     // Neither collection is changed after IORegistry publication.
     entries->release();
     report->release();
-    valid = valid && captureRuntimeRom(buffer,capture.binarySize);
-    valid = valid && captureColdState(buffer,capture.binarySize);
-    valid = valid && captureMemoryLayout(capture.vramBytes);
-    valid = valid && captureBootDisplay(buffer, capture.binarySize);
+    // Keep independent evidence after a semantic/publishing rejection. Every
+    // next domain still requires its own inputs and the current capture gate;
+    // no read is attempted after actual scope/power revocation.
+    if(parsed==hackynavi::DiscoveryStatus::Ok && layoutStatus==hackynavi::IpLayoutStatus::Ok) {
+        if(captureEpochValid())valid=captureRuntimeRom(buffer,capture.binarySize)&&valid;
+        if(captureEpochValid())valid=captureColdState(buffer,capture.binarySize)&&valid;
+        const bool memoryValid=captureEpochValid()&&captureMemoryLayout(capture.vramBytes);
+        valid=memoryValid&&valid;
+        if(memoryValid&&captureEpochValid())valid=captureBootDisplay(buffer,capture.binarySize)&&valid;
+        if(memoryValid&&captureEpochValid())valid=captureBootDisplayContext(buffer,capture.binarySize)&&valid;
+    }
     if (valid) {
         discoveryBytes_ = buffer;
         discoveryCapture_ = capture;
@@ -399,6 +486,7 @@ bool HackyNaviDevice::captureDiscovery() {
 }
 
 bool HackyNaviDevice::captureRuntimeRom(const uint8_t* discovery,size_t bytes) {
+    captureStageLocked("RuntimeROM");
     namespace rr=hackynavi::runtimerom;
     if(runtimeRom_)return false;
     romCapture_=rr::Result{};
@@ -459,6 +547,7 @@ bool HackyNaviDevice::captureRuntimeRom(const uint8_t* discovery,size_t bytes) {
 }
 
 bool HackyNaviDevice::captureColdState(const uint8_t* discovery,size_t bytes) {
+    captureStageLocked("PostedAndAuxiliaryState");
     namespace bs=hackynavi::bootstrap;namespace ca=hackynavi::coldaux;
     postedCapture_=bs::Result{};postedCapture_.status=bs::Status::InvalidArgument;
     const bool haveFirmware=runtimeRom_ && firmwareInfoStatus_==hackynavi::Status::Ok && firmwareInfo_.present;
@@ -485,18 +574,51 @@ bool HackyNaviDevice::captureColdState(const uint8_t* discovery,size_t bytes) {
         string(posted,"OwnershipStatus","DiagnosticOnlyExternalExclusionNotEstablished") &&
         setProperty("PostedColdState",posted);
     posted->release();
-    auxCapture_=ca::Result{};
+    auxCapture_=ca::Result{};auxCapture_.instance=0xff;
+    ca::PowerInventory inventory={};inventory.failedInstance=0xff;
+    for(size_t v=0;v<ca::kVcnInstances;++v)inventory.probes[v].instance=static_cast<uint8_t>(v);
     auto status=ca::buildLayout(discovery,bytes,registerBytes_,auxLayout_);
     const bool postedCold=postedCapture_.status==bs::Status::Ok;
+    bool classifierAttempted=false;
     if(postedCold && status==ca::Status::Ok) {
         auxCaptureActive_=true;
-        status=ca::checkStopped(auxLayout_,{this,read32},auxCapture_);
+        // POWER_STATUS is Linux's first, always-readable dump entry. Do not
+        // access PGFSM/client windows unless both instances were coherently
+        // readable with TILES_OFF clear. This observation is not a DMA proof.
+        if(ca::inventoryVcnPower(auxLayout_,{this,read32},inventory)==ca::PowerInventoryStatus::ReadAccessObserved) {
+            classifierAttempted=true;
+            status=ca::checkStopped(auxLayout_,{this,read32},auxCapture_);
+        } else status=ca::Status::PowerUnavailable;
         auxCaptureActive_=false;
     }
     auxCapture_.status=postedCold?status:ca::Status::InvalidArgument;
-    OSDictionary* aux=OSDictionary::withCapacity(10);
+    OSDictionary* aux=OSDictionary::withCapacity(12);
     if(!aux)return false;
-    valid=valid && string(aux,"Status",postedCold?ca::statusString(status):"NotCheckedWithoutPostedColdState") &&
+    OSDictionary* power=OSDictionary::withCapacity(10);
+    OSArray* probes=OSArray::withCapacity(ca::kVcnInstances);
+    if(!power || !probes){if(power)power->release();if(probes)probes->release();aux->release();return false;}
+    bool powerValid=string(power,"Status",ca::statusString(inventory.status)) &&
+        number(power,"ReadsAttempted",inventory.reads) && number(power,"LastRegister",inventory.lastRegister) &&
+        number(power,"LastValue",inventory.lastValue) && number(power,"FailedInstance",inventory.failedInstance,8) &&
+        power->setObject("LastReadSucceeded",inventory.lastReadSucceeded?kOSBooleanTrue:kOSBooleanFalse) &&
+        power->setObject("CurrentHardwareAuthority",kOSBooleanFalse);
+    for(size_t v=0;powerValid && v<ca::kVcnInstances;++v) {
+        const auto& probe=inventory.probes[v];OSDictionary* item=OSDictionary::withCapacity(8);
+        if(!item){powerValid=false;break;}
+        powerValid=number(item,"Instance",probe.instance,8) && number(item,"Register",probe.reg) &&
+            number(item,"Before",probe.raw[0]) && number(item,"After",probe.raw[1]) &&
+            number(item,"AttemptedMask",probe.attemptedMask,8) &&
+            number(item,"ReadSucceededMask",probe.readSucceededMask,8) &&
+            number(item,"ValidMask",probe.validMask,8) && probes->setObject(item);
+        item->release();
+    }
+    powerValid=powerValid && power->setObject("Probes",probes) && aux->setObject("VcnPowerInventory",power);
+    probes->release();power->release();
+    const char* auxiliaryStatus=!postedCold?"NotCheckedWithoutPostedColdState":
+        (!classifierAttempted && inventory.status!=ca::PowerInventoryStatus::NotAttempted?
+        "NotCheckedWithoutVcnRegisterAccess":ca::statusString(status));
+    valid=valid && powerValid && string(aux,"Status",auxiliaryStatus) &&
+        aux->setObject("ClassifierAttempted",classifierAttempted?kOSBooleanTrue:kOSBooleanFalse) &&
         number(aux,"Reads",auxCapture_.reads) && number(aux,"LastRegister",auxCapture_.lastRegister) &&
         number(aux,"LastValue",auxCapture_.lastValue) && number(aux,"FailedInstance",auxCapture_.instance,8) &&
         number(aux,"PoweredOffMask",auxCapture_.poweredOffMask,8) &&
@@ -505,6 +627,7 @@ bool HackyNaviDevice::captureColdState(const uint8_t* discovery,size_t bytes) {
 }
 
 bool HackyNaviDevice::captureMemoryLayout(uint64_t vramBytes) {
+    captureStageLocked("MemoryLayout");
     // Linux pinned MMHUB3 generated offsets, BASE_IDX=0, in DWORD units.
     // No assumed address from another GPU or ROM is used to access registers.
     const uint32_t relative[3] = {0x08ec, 0x08ed, 0x08d7};
@@ -530,7 +653,7 @@ bool HackyNaviDevice::captureMemoryLayout(uint64_t vramBytes) {
     uint64_t barAddress = bar0 & ~UInt32(15);
     if ((bar0 & 6U) == 4U)
         barAddress |= uint64_t(pci_->configRead32(kIOPCIConfigBaseAddress1)) << 32;
-    IODeviceMemory* bar = pci_->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+    hackynavi::nativepci::AssignedMemory bar(pci_,kIOPCIConfigBaseAddress0);
     if (!bar || bar->getPhysicalAddress() != barAddress) {
         IOLog("HackyNaviDevice: BAR0 assigned resource does not match PCI configuration\n");
         return false;
@@ -581,29 +704,127 @@ bool HackyNaviDevice::captureMemoryLayout(uint64_t vramBytes) {
 }
 
 bool HackyNaviDevice::captureBootDisplay(const uint8_t* discovery, size_t bytes) {
+    captureStageLocked("BootDisplay");
     namespace bd = hackynavi::bootdisplay;
+    HackyNaviReadCapture<bd::ReadCapture> readCapture;
     displayCapture_ = bd::Capture{};
     displayCapture_.failedPipe = 0xff;
+    displayCapture_.lastPowerProbe.pipe = 0xff;
+    bd::PowerInventory powerInventory = {};
+    powerInventory.failedPipe = 0xff;
+    for (auto& probe : powerInventory.probes) probe.pipe = 0xff;
+    bool classifierAttempted = false;
     auto status = bd::buildLayout(discovery, bytes, registerBytes_, displayLayout_);
+    auto inventoryStatus = status;
     if (status == bd::Status::Ok) {
         const bd::Io io = {this, read32};
         displayCaptureActive_ = true;
-        status = postedCapture_.status==hackynavi::bootstrap::Status::Ok?
-            bd::capturePostedCold(displayLayout_,memoryLayout_,io,displayCapture_):
-            bd::capture(displayLayout_, memoryLayout_, io, displayCapture_);
+        // Read the always-on power controls independently of classification.
+        // A contrary desired-state bit must not hide CONFIG or other pipes.
+        // Stop on transport loss/all-ones; no HUBP access follows that failure.
+        inventoryStatus = bd::inventoryPower(displayLayout_, io, powerInventory);
+        status = inventoryStatus;
+        if (inventoryStatus == bd::Status::Ok) {
+            classifierAttempted = true;
+            status = bd::captureRecorded(displayLayout_,memoryLayout_,io,displayCapture_,readCapture.get(),
+                postedCapture_.status==hackynavi::bootstrap::Status::Ok);
+        }
         displayCaptureActive_ = false;
     }
     // This is diagnostic capture. Two equal snapshots do not establish that
     // firmware/another display programmer cannot change the addresses later.
     // Never configure an allocator or a GART from this report alone.
-    OSDictionary* report = OSDictionary::withCapacity(9);
+    OSDictionary* report = OSDictionary::withCapacity(15);
+    OSDictionary* powerProbe = OSDictionary::withCapacity(5);
+    OSDictionary* inventoryReport = OSDictionary::withCapacity(9);
+    OSArray* inventoryProbes = OSArray::withCapacity(bd::kPipeCount);
     OSArray* planes = OSArray::withCapacity(bd::kPipeCount);
-    if (!report || !planes) {
+    if (!report || !powerProbe || !inventoryReport || !inventoryProbes || !planes) {
         if (report) report->release();
+        if (powerProbe) powerProbe->release();
+        if (inventoryReport) inventoryReport->release();
+        if (inventoryProbes) inventoryProbes->release();
         if (planes) planes->release();
         return false;
     }
-    bool valid = true;
+    // These are the actual successful reads from the last power probe, even
+    // when the first status was rejected. The mask distinguishes unavailable
+    // fields from a real zero; reporting performs no additional MMIO.
+    const auto& probe = displayCapture_.lastPowerProbe;
+    bool valid = number(powerProbe, "Pipe", probe.pipe, 8) &&
+        number(powerProbe, "ReadsSucceededMask", probe.readsSucceededMask, 8) &&
+        number(powerProbe, "StatusBefore", probe.statusBefore) &&
+        number(powerProbe, "Config", probe.config) &&
+        number(powerProbe, "StatusAfter", probe.statusAfter);
+    for (size_t i = 0; valid && i < bd::kPipeCount; ++i) {
+        const auto& observed = powerInventory.probes[i];
+        OSDictionary* item = OSDictionary::withCapacity(5);
+        if (!item) { valid = false; break; }
+        valid = number(item, "Pipe", observed.pipe, 8) &&
+            number(item, "ReadsSucceededMask", observed.readsSucceededMask, 8) &&
+            number(item, "StatusBefore", observed.statusBefore) &&
+            number(item, "Config", observed.config) &&
+            number(item, "StatusAfter", observed.statusAfter) && inventoryProbes->setObject(item);
+        item->release();
+    }
+    valid = valid && string(inventoryReport, "Status", bd::statusString(inventoryStatus)) &&
+        number(inventoryReport, "ReadsAttempted", powerInventory.readsAttempted) &&
+        number(inventoryReport, "LastRegister", powerInventory.lastRegister) &&
+        number(inventoryReport, "LastValue", powerInventory.lastValue) &&
+        number(inventoryReport, "FailedPipe", powerInventory.failedPipe, 8) &&
+        inventoryReport->setObject("LastReadSucceeded", powerInventory.lastReadSucceeded ? kOSBooleanTrue : kOSBooleanFalse) &&
+        inventoryReport->setObject("CurrentHardwareAuthority", kOSBooleanFalse) &&
+        inventoryReport->setObject("Probes", inventoryProbes);
+    // Preserve a fully read snapshot even when decoding later rejects a plane
+    // format. Unread gated windows are omitted, never represented as zeros.
+    // This is CPU-only serialization of the captured observations.
+    if (valid && displayCapture_.snapshotReadComplete) {
+        const auto words = [](const uint32_t* values, size_t count) -> OSArray* {
+            OSArray* out = OSArray::withCapacity(static_cast<unsigned>(count));
+            if (!out) return nullptr;
+            for (size_t i = 0; i < count; ++i) {
+                OSNumber* item = OSNumber::withNumber(values[i], 32);
+                const bool ok = item && out->setObject(item);
+                if (item) item->release();
+                if (!ok) { out->release(); return nullptr; }
+            }
+            return out;
+        };
+        OSDictionary* raw = OSDictionary::withCapacity(6);
+        OSArray* pipes = OSArray::withCapacity(bd::kPipeCount);
+        OSArray* globalOffsets = words(displayLayout_.global, bd::kGlobalRegisterCount);
+        OSArray* globalValues = words(displayCapture_.snapshot.global, bd::kGlobalRegisterCount);
+        OSArray* vgaOffsets = words(displayLayout_.vga, bd::kVgaCount);
+        OSArray* vgaValues = words(displayCapture_.snapshot.vga, bd::kVgaCount);
+        valid = raw && pipes && globalOffsets && globalValues && vgaOffsets && vgaValues;
+        for (size_t p = 0; valid && p < bd::kPipeCount; ++p) {
+            const bool off = displayCapture_.snapshot.power[p] == 0x80000000 ||
+                displayCapture_.snapshot.power[p] == 0x90000000;
+            OSDictionary* item = OSDictionary::withCapacity(6);
+            OSArray* offsets = off ? nullptr : words(displayLayout_.pipe[p], bd::kPipeRegisterCount);
+            OSArray* values = off ? nullptr : words(displayCapture_.snapshot.pipe[p], bd::kPipeRegisterCount);
+            valid = item && number(item, "Pipe", p, 8) &&
+                number(item, "PowerStatus", displayCapture_.snapshot.power[p]) &&
+                number(item, "PowerConfig", displayCapture_.snapshot.powerConfig[p]) &&
+                item->setObject("WindowRead", off ? kOSBooleanFalse : kOSBooleanTrue) &&
+                (off || (offsets && values && item->setObject("RegisterOffsets", offsets) &&
+                    item->setObject("RegisterValues", values))) && pipes->setObject(item);
+            if (offsets) offsets->release();
+            if (values) values->release();
+            if (item) item->release();
+        }
+        valid = valid && raw->setObject("GlobalRegisterOffsets", globalOffsets) &&
+            raw->setObject("GlobalRegisterValues", globalValues) &&
+            raw->setObject("VgaRegisterOffsets", vgaOffsets) && raw->setObject("VgaRegisterValues", vgaValues) &&
+            raw->setObject("CurrentHardwareAuthority", kOSBooleanFalse) && raw->setObject("Pipes", pipes) &&
+            report->setObject("RawSnapshot", raw);
+        if (raw) raw->release();
+        if (pipes) pipes->release();
+        if (globalOffsets) globalOffsets->release();
+        if (globalValues) globalValues->release();
+        if (vgaOffsets) vgaOffsets->release();
+        if (vgaValues) vgaValues->release();
+    }
     for (size_t i = 0; valid && i < displayCapture_.planeCount; ++i) {
         const auto& plane = displayCapture_.planes[i];
         OSDictionary* item = OSDictionary::withCapacity(11);
@@ -620,6 +841,8 @@ bool HackyNaviDevice::captureBootDisplay(const uint8_t* discovery, size_t bytes)
             planes->setObject(item);
         item->release();
     }
+    const bool rawPublished=readCapture.publish(report,"RawReadJournal");
+    if(!rawPublished)report->setObject("ReadJournalPublicationIncomplete",kOSBooleanTrue);
     valid = valid && string(report, "CaptureStatus", bd::statusString(status)) &&
         report->setObject("CompleteClassification", displayCapture_.complete ? kOSBooleanTrue : kOSBooleanFalse) &&
         report->setObject("ReservationUseAllowed", kOSBooleanFalse) &&
@@ -627,32 +850,216 @@ bool HackyNaviDevice::captureBootDisplay(const uint8_t* discovery, size_t bytes)
         number(report, "PoweredOffMask", displayCapture_.poweredOffMask,8) &&
         number(report, "ReadsAttempted", displayCapture_.readsAttempted) &&
         number(report, "LastRegister", displayCapture_.lastRegister) &&
+        number(report, "LastValue", displayCapture_.lastValue) &&
+        report->setObject("LastReadSucceeded", displayCapture_.lastReadSucceeded ? kOSBooleanTrue : kOSBooleanFalse) &&
+        report->setObject("LastPowerProbe", powerProbe) &&
+        report->setObject("PowerInventory", inventoryReport) &&
+        report->setObject("ClassifierAttempted", classifierAttempted ? kOSBooleanTrue : kOSBooleanFalse) &&
+        report->setObject("SnapshotReadComplete", displayCapture_.snapshotReadComplete ? kOSBooleanTrue : kOSBooleanFalse) &&
         number(report, "FailedPipe", displayCapture_.failedPipe) &&
         string(report, "Scope", "Observed scanout footprint; ownership and complete display allocation inventory unestablished") &&
         report->setObject("Planes", planes) && setProperty("BootDisplay", report);
     planes->release();
+    powerProbe->release();
+    inventoryProbes->release();
+    inventoryReport->release();
     report->release();
     // Unsupported scanout is reported explicitly; it does not invalidate the
     // independently captured discovery/memory snapshot or enable allocation.
     return valid;
 }
 
-bool HackyNaviDevice::start(IOService* provider) {
-    if (!enabled() || !lock_ || !IOService::start(provider)) return false;
-    bool success = false;
-    IOLockLock(lock_);
-    pci_ = OSDynamicCast(IOPCIDevice, provider);
-    if (pci_) pci_->retain();
+bool HackyNaviDevice::captureBootDisplayContext(const uint8_t* discovery, size_t bytes) {
+    captureStageLocked("BootDisplayContext");
+    namespace dc = hackynavi::bootdisplaycontext;
+    displayContextCapture_ = dc::Capture{};
+    auto& captured = displayContextCapture_;
+    captured.failedPass = captured.failedPipe = captured.failedRegisterIndex = 0xff;
+    captured.lastPowerProbe.pipe = 0xff;
+    displayContextGeneration_ = powerGeneration_;
+    displayContextAccessFailure_ = nullptr;
+    auto status = dc::buildLayout(discovery, bytes, registerBytes_, displayContextLayout_);
+    const bool prerequisite = displayLayout_.valid && displayCapture_.snapshotReadComplete;
+    bool attempted = false;
+    if (status == dc::Status::Ok && prerequisite && !captureRevoked() &&
+        !stopping_ && powerAvailable_ && pmInitialized_ && opened_ && !isInactive()) {
+        displayContextCaptureActive_ = true;
+        // Keep the callback state distinct from the captured/layout objects.
+        // Only this access stage admits the resolved additional read set.
+        struct Access { HackyNaviDevice* device; } access = {this};
+        const dc::Io io = {&access,
+            [](void* p) -> bool {
+                return bootDisplayContextAccessValid(static_cast<Access*>(p)->device);
+            },
+            [](void* p, uint32_t offset, uint32_t& value) -> bool {
+                return read32(static_cast<Access*>(p)->device, offset, value);
+            }};
+        attempted = true;
+        status = dc::capture(displayContextLayout_, io, captured);
+        displayContextCaptureActive_ = false;
+    }
+    // This is a source generation for historical observations, not a usable
+    // FunctionGroup operation or a lease on firmware display state.
+    const bool generationCurrent = attempted && !displayContextAccessFailure_ &&
+        !captureRevoked() && displayContextGeneration_ == powerGeneration_ &&
+        powerAvailable_ && pmInitialized_ && !stopping_ && !isInactive();
+    const auto words = [](const uint32_t* values, size_t count) -> OSArray* {
+        OSArray* out = OSArray::withCapacity(static_cast<unsigned>(count));
+        if (!out) return nullptr;
+        for (size_t i = 0; i < count; ++i) {
+            OSNumber* item = OSNumber::withNumber(values[i], 32);
+            const bool ok = item && out->setObject(item);
+            if (item) item->release();
+            if (!ok) { out->release(); return nullptr; }
+        }
+        return out;
+    };
+    OSDictionary* report = OSDictionary::withCapacity(27);
+    OSDictionary* probe = OSDictionary::withCapacity(5);
+    OSArray* passes = OSArray::withCapacity(dc::kPasses);
+    OSArray* offsets = displayContextLayout_.valid ?
+        words(displayContextLayout_.registers, dc::kRegisterCount) : nullptr;
+    OSArray* powerOffsets = displayContextLayout_.valid ?
+        words(displayContextLayout_.power, dc::kPipeCount) : nullptr;
+    OSArray* configOffsets = displayContextLayout_.valid ?
+        words(displayContextLayout_.powerConfig, dc::kPipeCount) : nullptr;
+    bool valid = report && probe && passes &&
+        (!displayContextLayout_.valid || (offsets && powerOffsets && configOffsets));
+    for (size_t pass = 0; valid && pass < dc::kPasses; ++pass) {
+        OSDictionary* item = OSDictionary::withCapacity(8);
+        OSArray* values = words(captured.values[pass], dc::kRegisterCount);
+        OSArray* power = words(captured.powerStatus[pass], dc::kPipeCount);
+        OSArray* config = words(captured.powerConfig[pass], dc::kPipeCount);
+        valid = item && values && power && config && number(item, "Pass", pass, 8) &&
+            number(item, "AttemptedMask", captured.attemptedMask[pass]) &&
+            number(item, "ReadSucceededMask", captured.readSucceededMask[pass]) &&
+            number(item, "ValidMask", captured.validMask[pass]) &&
+            number(item, "PowerValidMask", captured.powerValidMask[pass], 8) &&
+            item->setObject("RegisterValues", values) &&
+            item->setObject("PowerStatus", power) && item->setObject("PowerConfig", config) &&
+            passes->setObject(item);
+        if (values) values->release();
+        if (power) power->release();
+        if (config) config->release();
+        if (item) item->release();
+    }
+    const auto& lastProbe = captured.lastPowerProbe;
+    valid = valid && number(probe, "Pipe", lastProbe.pipe, 8) &&
+        number(probe, "ReadsSucceededMask", lastProbe.readsSucceededMask, 8) &&
+        number(probe, "StatusBefore", lastProbe.statusBefore) &&
+        number(probe, "Config", lastProbe.config) && number(probe, "StatusAfter", lastProbe.statusAfter);
+    const char* captureStatus = attempted ? dc::statusString(status) :
+        status != dc::Status::Ok ? dc::statusString(status) :
+        !prerequisite ? "NotAttemptedWithoutCompleteBootDisplaySnapshot" : "NotAttemptedWithoutPowerGeneration";
+    valid = valid && string(report, "CaptureStatus", captureStatus) &&
+        string(report, "NativeAccessFailure", displayContextAccessFailure_ ? displayContextAccessFailure_ : "NoneObserved") &&
+        number(report, "PowerGeneration", displayContextGeneration_, 64) &&
+        report->setObject("CaptureAttempted", attempted ? kOSBooleanTrue : kOSBooleanFalse) &&
+        report->setObject("PrerequisiteSnapshotComplete", prerequisite ? kOSBooleanTrue : kOSBooleanFalse) &&
+        report->setObject("NativeGenerationStillCurrent", generationCurrent ? kOSBooleanTrue : kOSBooleanFalse) &&
+        report->setObject("HistoricalEvidenceOnly", kOSBooleanTrue) &&
+        report->setObject("CurrentHardwareAuthority", kOSBooleanFalse) &&
+        report->setObject("ReservationUseAllowed", kOSBooleanFalse) &&
+        report->setObject("EngineReadinessEstablished", kOSBooleanFalse) &&
+        report->setObject("PhysicalAddressModeEstablished", kOSBooleanFalse) &&
+        report->setObject("ReadsComplete", captured.readsComplete ? kOSBooleanTrue : kOSBooleanFalse) &&
+        number(report, "CompletedPasses", captured.completedPasses, 8) &&
+        number(report, "ChangedMask", captured.changedMask) &&
+        number(report, "PowerChangedMask", captured.powerChangedMask, 8) &&
+        number(report, "FailedPass", captured.failedPass, 8) &&
+        number(report, "FailedPipe", captured.failedPipe, 8) &&
+        number(report, "FailedRegisterIndex", captured.failedRegisterIndex, 8) &&
+        number(report, "ReadsAttempted", captured.readsAttempted) &&
+        number(report, "LastRegister", captured.lastRegister) &&
+        number(report, "LastValue", captured.lastValue) &&
+        report->setObject("LastReadSucceeded", captured.lastReadSucceeded ? kOSBooleanTrue : kOSBooleanFalse) &&
+        report->setObject("LastPowerProbe", probe) && report->setObject("Passes", passes) &&
+        (!displayContextLayout_.valid || (report->setObject("RegisterOffsets", offsets) &&
+            report->setObject("PowerStatusOffsets", powerOffsets) && report->setObject("PowerConfigOffsets", configOffsets))) &&
+        string(report, "Scope", "Raw timing, HUBP ancillary and VM context words; unread values require masks; no ownership or address-domain inference") &&
+        setProperty("BootDisplayContext", report);
+    if (offsets) offsets->release();
+    if (powerOffsets) powerOffsets->release();
+    if (configOffsets) configOffsets->release();
+    if (passes) passes->release();
+    if (probe) probe->release();
+    if (report) report->release();
+    return valid;
+}
+
+bool HackyNaviDevice::bootDisplayContextAccessValid(void* context) {
+    auto* self = static_cast<HackyNaviDevice*>(context);
+    if (!self || self->displayContextAccessFailure_) return false;
+    // The diagnostic worker holds lock_ throughout capture. Native power-off
+    // and termination publish revocation before waiting on that mutex. This
+    // excludes this driver's teardown; it is not a firmware/display lease.
+    if (!self->displayContextCaptureActive_ || !self->displayContextGeneration_ ||
+        self->displayContextGeneration_ != self->powerGeneration_ ||
+        !self->displayContextLayout_.valid || !self->displayLayout_.valid ||
+        !self->displayCapture_.snapshotReadComplete || !self->accessAllowed(0)) {
+        self->displayContextAccessFailure_ = "PowerOrGenerationUnavailable";
+        return false;
+    }
     UInt32 revisionClass = 0;
     UInt16 command = 0;
     UInt8 header = 0;
-    if (pci_ && validateConfiguration(pci_, revisionClass, command, header)) {
-        opened_ = pci_->open(this);
-        if (opened_ && validateConfiguration(pci_, revisionClass, command, header)) {
+    if (!self->pci_->isOpen(self) ||
+        !validateConfiguration(self->pci_, revisionClass, command, header)) {
+        self->displayContextAccessFailure_ = "PCIConfigurationUnavailable";
+        return false;
+    }
+    if (self->captureRevoked()) {
+        self->displayContextAccessFailure_ = "PowerOrGenerationUnavailable";
+        return false;
+    }
+    const UInt32 bar4 = self->pci_->configRead32(kIOPCIConfigBaseAddress4);
+    const UInt32 bar5 = self->pci_->configRead32(kIOPCIConfigBaseAddress5);
+    auto* map = self->registerMap_;
+    if (bar4 == UINT32_MAX || (!(bar4 & 1U) && (bar4 & 6U) == 4U) ||
+        bar5 == UINT32_MAX || (bar5 & 7U) || !(bar5 & ~UInt32(15)) || !map ||
+        map->getPhysicalAddress() != (bar5 & ~UInt32(15)) ||
+        map->getLength() != self->registerBytes_ ||
+        self->displayContextLayout_.barBytes != self->registerBytes_ ||
+        reinterpret_cast<volatile uint32_t*>(map->getVirtualAddress()) != self->registers_ ||
+        (map->getMapOptions() & kIOMapCacheMask) != kIOMapInhibitCache) {
+        self->displayContextAccessFailure_ = "BARMappingUnavailable";
+        return false;
+    }
+    if (!self->accessAllowed(0) || self->displayContextGeneration_ != self->powerGeneration_) {
+        self->displayContextAccessFailure_ = "PowerOrGenerationUnavailable";
+        return false;
+    }
+    return true;
+}
+
+bool HackyNaviDevice::start(IOService* provider) {
+    if (!enabled() || !lock_ || !IOService::start(provider)) return false;
+    bool success = false;
+    IOPCIDevice* device = OSDynamicCast(IOPCIDevice, provider);
+    if (device) device->retain();
+    UInt32 revisionClass = 0;
+    UInt16 command = 0;
+    UInt8 header = 0;
+    // open() takes provider arbitration and sends interest notifications. Like
+    // close(), it must execute outside the acquisition mutex. Matching keeps
+    // the provider's configuration phase active until start() returns; phase-2
+    // teardown is deferred by XNU, but phase-1 may already mark us inactive.
+    const bool opened = device && !isInactive() &&
+        validateConfiguration(device, revisionClass, command, header, false) &&
+        device->open(this);
+    IOLockLock(lock_);
+    pci_ = device;
+    opened_ = opened;
+    if (!isInactive() && opened_ &&
+        validateConfiguration(pci_, revisionClass, command, header, false)) {
+            int engineArgument=0;
+            engineMode_=PE_parse_boot_argn("-hackynavi-engines",&engineArgument,sizeof(engineArgument));
             stopping_ = false;
-            if (mapRegisters()) {
-                success = setProperty("Mode", "ExperimentalDeviceBringup") &&
+            success = setProperty("Mode", engineMode_?"ExperimentalEngineBringup":"ExperimentalDeviceBringup") &&
                     setProperty("RequiredBootArgument", "-hackynavi-device") &&
+                    setProperty("EngineBringupRequested",engineMode_?kOSBooleanTrue:kOSBooleanFalse) &&
+                    setProperty("EngineStartupVerified",kOSBooleanFalse) &&
+                    setProperty("EngineActive",kOSBooleanFalse) &&
                     setProperty("AccelerationAvailable", kOSBooleanFalse) &&
                     setProperty("DisplayInitializationAvailable", kOSBooleanFalse) &&
                     setProperty("PCIIdentity", UInt64(kIdentity), 32) &&
@@ -662,16 +1069,17 @@ bool HackyNaviDevice::start(IOService* provider) {
                     setProperty("PCIHeaderType", UInt64(header), 8) &&
                     setProperty("RegisterBAR", UInt64(5), 32) &&
                     setProperty("RegisterBytes", UInt64(registerBytes_), 64) &&
+                    setProperty("PowerGeneration", UInt64(powerGeneration_), 64) &&
+                    setProperty("SnapshotGeneration", UInt64(0), 64) &&
                     setProperty("SnapshotStatus", "WaitingForPower") &&
                     setProperty("SnapshotValid", kOSBooleanFalse);
-            }
-        }
     }
     IOLockUnlock(lock_);
     if (success) {
         // These calls may arrange or invoke callbacks. Never hold lock_ over
         // PM registration, requests or PMstop(). setPowerState performs all
-        // discovery MMIO after the parent-on notification, not in start().
+        // acquisition scheduling after the parent-on notification, not in
+        // start(). The thread-call worker performs bounded sleepable MMIO.
         PMinit();
         IOLockLock(lock_);
         pmInitialized_ = true;
@@ -701,6 +1109,9 @@ void HackyNaviDevice::clearSnapshotLocked() {
     acquisitionActive_ = false;
     memoryCaptureActive_ = false;
     displayCaptureActive_ = false;
+    displayContextCaptureActive_ = false;
+    displayContextGeneration_ = 0;
+    displayContextAccessFailure_ = nullptr;
     romCaptureActive_=postedCaptureActive_=auxCaptureActive_=false;
     postedRegisterOffsets_[0]=postedRegisterOffsets_[1]=0;
     if(runtimeRom_){runtimeRom_->release();runtimeRom_=nullptr;}
@@ -718,6 +1129,8 @@ void HackyNaviDevice::clearSnapshotLocked() {
     hdpLayout_ = hackynavi::HdpLayout{};
     displayLayout_ = hackynavi::bootdisplay::Layout{};
     displayCapture_ = hackynavi::bootdisplay::Capture{};
+    displayContextLayout_ = hackynavi::bootdisplaycontext::Layout{};
+    displayContextCapture_ = hackynavi::bootdisplaycontext::Capture{};
     if (discoveryBytes_) {
         IOFree(discoveryBytes_, hackynavi::kDeviceDiscoveryMaxBytes);
         discoveryBytes_ = nullptr;
@@ -727,57 +1140,171 @@ void HackyNaviDevice::clearSnapshotLocked() {
     // Remove the published evidence together with the in-memory snapshot, so
     // callers cannot confuse pre-sleep bases with the new power generation.
     removeProperty("Discovery");
+    removeProperty("DiscoveryAcquisition");
     removeProperty("MemoryLayout");
     removeProperty("BootDisplay");
+    removeProperty("BootDisplayContext");
+    removeProperty("BootConsole");
     removeProperty("RuntimeROM");removeProperty("PostedColdState");removeProperty("ColdAuxiliaryEngines");
     setProperty("SnapshotValid", kOSBooleanFalse);
+    setProperty("SnapshotGeneration", UInt64(0), 64);
+}
+
+void HackyNaviDevice::captureStageLocked(const char* stage) {
+    captureStage_ = stage;
+    setProperty("CaptureStage", stage);
+    setProperty("CapturePowerGeneration", UInt64(powerGeneration_), 64);
+    IOLog("HackyNaviDevice: capture generation %llu stage %s\n",
+        static_cast<unsigned long long>(powerGeneration_), stage);
+}
+
+void HackyNaviDevice::saveCaptureObservationLocked(uint64_t generation, bool revoked) {
+    // Historical evidence survives clearing rejected or revoked live snapshots.
+    // Published child dictionaries are immutable; retaining them does not retain
+    // a BAR mapping, DMA buffer or usable hardware-generation lease.
+    OSDictionary* observation = OSDictionary::withCapacity(13);
+    if (!observation) return;
+    bool valid = number(observation, "PowerGeneration", generation, 64) &&
+        string(observation, "LastStage", captureStage_) &&
+        string(observation, "Outcome", snapshotValid_ ? "Validated" : revoked ? "Revoked" : "Failed") &&
+        observation->setObject("HistoricalEvidenceOnly", kOSBooleanTrue) &&
+        observation->setObject("CurrentHardwareAuthority", kOSBooleanFalse);
+    if(engineCaptureScope_)valid=number(observation,"EngineOperationGeneration",engineCaptureScope_->generation(),64)&&valid;
+    const char* keys[] = {"DiscoveryAcquisition", "Discovery", "RuntimeROM",
+        "PostedColdState", "ColdAuxiliaryEngines", "MemoryLayout", "BootDisplay", "BootDisplayContext", "BootConsole"};
+    for (const char* key : keys) {
+        OSObject* value = getProperty(key);
+        if (value) valid = observation->setObject(key, value) && valid;
+    }
+    if (!valid || !setProperty("LastCaptureObservation", observation))
+        IOLog("HackyNaviDevice: historical capture diagnostic publication failed\n");
+    observation->release();
+}
+
+bool HackyNaviDevice::captureRevoked() const {
+    return __atomic_load_n(&captureRevocations_, __ATOMIC_ACQUIRE) != 0;
+}
+
+void HackyNaviDevice::advancePowerGenerationLocked() {
+    ++powerGeneration_;
+    if (registryReady_) setProperty("PowerGeneration", UInt64(powerGeneration_), 64);
+}
+
+void HackyNaviDevice::queueCaptureLocked() {
+    if (!captureCall_ || capturePending_ || stopping_ || !pmInitialized_ ||
+        captureRevoked() || !powerAvailable_ || !opened_ || isInactive() ||
+        (engineMode_&&engineAttempted_)) return;
+    capturePending_ = true;
+    // Hold the service until terminal cancellation/drain, rather than dropping
+    // the last reference from inside this callback and entering free() there.
+    if (!captureSelfHeld_) { retain(); captureSelfHeld_ = true; }
+    thread_call_enter(captureCall_);
+}
+
+void HackyNaviDevice::captureThread(thread_call_param_t context, thread_call_param_t) {
+    auto* self = static_cast<HackyNaviDevice*>(context);
+    if(self->engineMode_){self->engineWorker();return;}
+    IOLockLock(self->lock_);
+    // Coalesce a queued old generation into the newest powered generation.
+    // Power callbacks and this entire MMIO transaction share lock_, so an
+    // off/on sequence cannot expose the previous generation's BAR mapping.
+    if (!self->captureRevoked() && self->pmInitialized_ && self->powerAvailable_ && !self->stopping_ &&
+        !self->isInactive() && self->opened_) {
+        const uint64_t generation = self->powerGeneration_;
+        UInt32 revisionClass = 0;
+        UInt16 command = 0;
+        UInt8 header = 0;
+        self->setProperty("SnapshotStatus", "CapturingOnSleepableWorker");
+        self->removeProperty("LastCaptureObservation");
+        self->clearSnapshotLocked();
+        self->unmapRegistersLocked();
+        self->captureStageLocked("PCIConfiguration");
+        self->snapshotValid_ = validateConfiguration(self->pci_, revisionClass, command, header);
+        if (self->snapshotValid_) {
+            self->captureStageLocked("BAR5Mapping");
+            self->snapshotValid_ = self->mapRegisters();
+        }
+        if (self->snapshotValid_) self->snapshotValid_ = self->captureDiscovery();
+        // A terminal/power-off caller publishes revocation before waiting for
+        // lock_. A revocation observed after the final read rejects publication.
+        // No older queued invocation owns a generation: the mutex binds this
+        // whole acquisition and its result to the current powered generation.
+        const bool revoked = self->captureRevoked();
+        self->snapshotValid_ = self->snapshotValid_ && !revoked &&
+            generation == self->powerGeneration_;
+        if (self->snapshotValid_) self->captureStageLocked("Complete");
+        self->saveCaptureObservationLocked(generation, revoked);
+        if (!self->snapshotValid_) {
+            self->clearSnapshotLocked();
+            self->powerAvailable_ = false;
+            self->unmapRegistersLocked();
+        } else {
+            self->setProperty("RegisterBytes", UInt64(self->registerBytes_), 64);
+        }
+        self->setProperty("SnapshotValid", self->snapshotValid_ ? kOSBooleanTrue : kOSBooleanFalse);
+        self->setProperty("SnapshotGeneration", UInt64(self->snapshotValid_ ? generation : 0), 64);
+        self->setProperty("SnapshotStatus", self->snapshotValid_ ? "ValidatedPowerUpCapture" :
+            revoked ? "PowerUpCaptureRevoked" : "PowerUpCaptureFailed");
+        IOLog("HackyNaviDevice: power generation %llu capture %s\n",
+            static_cast<unsigned long long>(self->powerGeneration_), self->snapshotValid_ ? "validated" : "failed");
+    }
+    self->capturePending_ = false;
+    IOLockUnlock(self->lock_);
 }
 
 IOReturn HackyNaviDevice::setPowerState(unsigned long ordinal, IOService*) {
     if (!lock_) return IOPMAckImplied;
+    if (ordinal == 0)
+        __atomic_fetch_or(&captureRevocations_, kCapturePowerRevoked, __ATOMIC_RELEASE);
+    if (ordinal == 0) retireEngines(HackyNaviFunctionGroup::RetirementReason::PowerDown);
     IOLockLock(lock_);
-    if (!pmInitialized_ || stopping_ || ordinal > 1) {
+    if (!pmInitialized_ || stopping_ || isInactive() || ordinal > 1) {
         powerAvailable_ = false;
         IOLockUnlock(lock_);
         return IOPMAckImplied;
     }
     if (ordinal == 0) {
-        // The same mutex excludes every complete selector/read transaction.
-        // No DMA or engine has been enabled by this service, so no GPU work
-        // needs retirement before this acknowledgement. That must change
-        // before a GART controller is activated from this service.
+        // Paired engine retirement above precedes this mapping release/ACK.
+        // The same mutex separately excludes diagnostic selector transactions.
         powerAvailable_ = false;
+        advancePowerGenerationLocked();
         clearSnapshotLocked();
+        unmapRegistersLocked();
         setProperty("SnapshotStatus", "PoweredOff");
     } else if (!powerAvailable_) {
         powerAvailable_ = true;
+        // PM serializes on/off callbacks. Clearing this bit cannot revive a
+        // terminally revoked service; terminal requests have their own bit.
+        __atomic_fetch_and(&captureRevocations_, ~kCapturePowerRevoked, __ATOMIC_RELEASE);
+        advancePowerGenerationLocked();
         clearSnapshotLocked();
-        UInt32 revisionClass = 0;
-        UInt16 command = 0;
-        UInt8 header = 0;
-        // The power callback orders us after the parent, but configuration
-        // must still be accessible and the assigned BAR must still match.
-        const UInt32 bar5 = pci_ ? pci_->configRead32(kIOPCIConfigBaseAddress5) : 0;
-        const bool mapMatches = registerMap_ && bar5 != UINT32_MAX &&
-            (bar5 & 7U) == 0 && (bar5 & ~UInt32(15)) != 0 &&
-            registerMap_->getPhysicalAddress() == (bar5 & ~UInt32(15));
-        snapshotValid_ = opened_ && mapMatches &&
-            validateConfiguration(pci_, revisionClass, command, header) && captureDiscovery();
-        if (!snapshotValid_) clearSnapshotLocked();
-        setProperty("SnapshotValid", snapshotValid_ ? kOSBooleanTrue : kOSBooleanFalse);
-        setProperty("SnapshotStatus", snapshotValid_ ? "ValidatedPowerUpCapture" : "PowerUpCaptureFailed");
-        IOLog("HackyNaviDevice: power-up capture %s\n", snapshotValid_ ? "validated" : "failed");
+        // Reacquire the assigned resource after every parent-on transition.
+        // A pre-sleep BAR mapping is not a lease on the new configuration.
+        unmapRegistersLocked();
+        setProperty("SnapshotStatus", "PowerUpCaptureQueued");
+        // This wake can race the worker's final pending=false publication
+        // before a FunctionGroup exists to deliver its own notification.
+        if(engineMode_) {
+            if(engineNotificationSerial_==UINT64_MAX)
+                panic("HackyNavi: engine notification serial exhausted");
+            ++engineNotificationSerial_;
+        }
+        queueCaptureLocked();
     }
     IOLockUnlock(lock_);
     return IOPMAckImplied;
 }
 
 void HackyNaviDevice::systemWillShutdown(IOOptionBits specifier) {
+    __atomic_fetch_or(&captureRevocations_, kCaptureTerminalRevoked, __ATOMIC_RELEASE);
+    retireEngines(HackyNaviFunctionGroup::RetirementReason::SystemShutdown);
     if (lock_) {
         IOLockLock(lock_);
         stopping_ = true;
         powerAvailable_ = false;
+        advancePowerGenerationLocked();
         clearSnapshotLocked();
+        unmapRegistersLocked();
         setProperty("SnapshotStatus", "SystemShutdown");
         IOLockUnlock(lock_);
     }
@@ -785,41 +1312,105 @@ void HackyNaviDevice::systemWillShutdown(IOOptionBits specifier) {
 }
 
 void HackyNaviDevice::stopPowerManagement() {
+    __atomic_fetch_or(&captureRevocations_, kCaptureTerminalRevoked, __ATOMIC_RELEASE);
     if (lock_) IOLockLock(lock_);
     stopping_ = true;
     powerAvailable_ = false;
     const bool initialized = pmInitialized_;
     pmInitialized_ = false;
     if (lock_) IOLockUnlock(lock_);
-    // PMstop is synchronous with the power callbacks, which take lock_. It
-    // must run without that lock, before dropping the BAR/provider or lock.
+    // XNU PMstop inhibits future driver calls and waits for prior calls, but
+    // power-plane detach is asynchronous and the wait itself has a deadline.
+    // stopping_/pmInitialized_ plus lock_ revoke MMIO independently of that
+    // wait. Never hold lock_ across PMstop: callbacks acquire the same lock.
     if (initialized) PMstop();
 }
 
+bool HackyNaviDevice::willTerminate(IOService* provider, IOOptionBits options) {
+    __atomic_fetch_or(&captureRevocations_, kCaptureTerminalRevoked, __ATOMIC_RELEASE);
+    retireEngines(HackyNaviFunctionGroup::RetirementReason::ProviderTerminating);
+    if (lock_) {
+        IOLockLock(lock_);
+        if (provider == pci_) {
+            // Actual engine retirement has joined outside lock_ before these
+            // observations and the Device's mapping reference are withdrawn.
+            stopping_ = true;
+            powerAvailable_ = false;
+            advancePowerGenerationLocked();
+            clearSnapshotLocked();
+            unmapRegistersLocked();
+            setProperty("SnapshotStatus", "ProviderTerminated");
+        }
+        IOLockUnlock(lock_);
+    }
+    return IOService::willTerminate(provider, options);
+}
+
+bool HackyNaviDevice::didTerminate(IOService* provider, IOOptionBits options, bool* defer) {
+    // XNU schedules stop only after an open client closes its provider.
+    // Waiting until stop() to close would leave this service permanently open
+    // on provider removal. releaseResources joins retirement before closing.
+    bool ours = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        ours = provider == pci_;
+        IOLockUnlock(lock_);
+    }
+    if (ours) releaseResources();
+    return IOService::didTerminate(provider, options, defer);
+}
+
 void HackyNaviDevice::releaseResources() {
+    __atomic_fetch_or(&captureRevocations_, kCaptureTerminalRevoked, __ATOMIC_RELEASE);
+    retireEngines(HackyNaviFunctionGroup::RetirementReason::Close);
     stopPowerManagement();
+    // No future enqueue is possible after stopping_/pmInitialized_ revoke it.
+    // Never wait while holding the mutex needed by the worker. A completed
+    // ONCE cancellation/drain finishes before dropping the worker's service
+    // hold, including when a completed generation has already been requeued.
+    if (captureCall_) thread_call_cancel_wait(captureCall_);
+    // Draining also covers a worker-local group which lost publication to
+    // termination. No group can be installed once stopping_ is set.
+    if (lock_) IOLockLock(lock_);
+    HackyNaviFunctionGroup* group=functionGroup_;functionGroup_=nullptr;
+    HackyNaviLifecycleController* lifecycle=lifecycle_;lifecycle_=nullptr;
+    if (lock_) IOLockUnlock(lock_);
+    if(group){group->shutdown();group->release();}
+    if(lifecycle)lifecycle->release();
     if (lock_) IOLockLock(lock_);
     stopping_ = true;
     acquisitionActive_ = false;
     memoryCaptureActive_ = false;
     displayCaptureActive_ = false;
+    displayContextCaptureActive_ = false;
+    displayContextGeneration_ = 0;
+    displayContextAccessFailure_ = nullptr;
     romCaptureActive_=postedCaptureActive_=auxCaptureActive_=false;
     snapshotValid_ = false;
+    capturePending_ = false;
+    const bool dropCaptureHold = captureSelfHeld_;
+    captureSelfHeld_ = false;
     // free() can run after an unsuccessful superclass init(). Do not access
     // registry storage unless the superclass completed its initialization.
     if (registryReady_) {
         removeProperty("Discovery");
+        removeProperty("DiscoveryAcquisition");
         removeProperty("MemoryLayout");
         removeProperty("BootDisplay");
+        removeProperty("BootDisplayContext");
         removeProperty("RuntimeROM");removeProperty("PostedColdState");removeProperty("ColdAuxiliaryEngines");
         setProperty("SnapshotValid", kOSBooleanFalse);
+        setProperty("SnapshotGeneration", UInt64(0), 64);
         setProperty("SnapshotStatus", "Stopped");
+        setProperty("RegisterBytes", UInt64(0), 64);
     }
     ipLayout_ = hackynavi::Navi31IpLayout{};
     memoryLayout_ = hackynavi::MemoryLayout{};
     hdpLayout_ = hackynavi::HdpLayout{};
     displayLayout_ = hackynavi::bootdisplay::Layout{};
     displayCapture_ = hackynavi::bootdisplay::Capture{};
+    displayContextLayout_ = hackynavi::bootdisplaycontext::Layout{};
+    displayContextCapture_ = hackynavi::bootdisplaycontext::Capture{};
     OSData* rom=runtimeRom_;runtimeRom_=nullptr;
     romLayout_=hackynavi::runtimerom::Layout{};
     romCapture_=hackynavi::runtimerom::Result{};
@@ -851,6 +1442,7 @@ void HackyNaviDevice::releaseResources() {
         if (opened) device->close(this);
         device->release();
     }
+    if (dropCaptureHold) release();
 }
 
 void HackyNaviDevice::stop(IOService* provider) {
@@ -860,6 +1452,7 @@ void HackyNaviDevice::stop(IOService* provider) {
 
 void HackyNaviDevice::free() {
     releaseResources();
+    if (captureCall_) { thread_call_free(captureCall_); captureCall_ = nullptr; }
     if (lock_) { IOLockFree(lock_); lock_ = nullptr; }
     IOService::free();
 }

@@ -156,6 +156,65 @@ bool verify(const Registers& r, const Io& io, const Controls& c, Result& out) {
 }
 } // namespace
 
+GuardInventoryStatus captureGuardInventory(const Navi31IpLayout& layout, uint64_t barBytes,
+    const GuardInventoryIo& io, GuardInventory& out) {
+    static_assert(RegCount == kGuardInventoryWords, "Inventory must cover actual resolved register table");
+    out = GuardInventory{}; out.status = GuardInventoryStatus::InvalidArgument;
+    out.layoutStatus = Status::InvalidArgument; out.lastIndex = UINT32_MAX;
+    if (!io.valid || !io.read32) return out.status;
+    Registers regs = {};
+    out.layoutStatus = resolve(layout, barBytes, regs);
+    if (out.layoutStatus != Status::Ok) return out.status = GuardInventoryStatus::LayoutRejected;
+    for (size_t i = 0; i < kGuardInventoryWords; ++i) {
+        out.offsets[i] = regs.address[i];
+        if (i == Sos) { out.guardMasks[i] = UINT32_MAX; out.guardExpected[i] = 0; }
+        else if (i == MesControl) { out.guardMasks[i] = kMesMask; out.guardExpected[i] = kMesHalt; }
+        else if (i >= GfxContext0 && i < Sdma0) out.guardMasks[i] = 1;
+        else if (i >= Sdma0) {
+            const size_t index = i - (i >= Sdma1 ? Sdma1 : Sdma0);
+            if (index >= 2 && index < 16) out.guardMasks[i] = 1;
+        }
+    }
+    // The extra iteration is the ending SOS bracket, not another catalogue word.
+    for (size_t i = 0; i <= kGuardInventoryWords; ++i) {
+        const bool end = i == kGuardInventoryWords;
+        const uint32_t offset = regs.address[end ? Sos : i];
+        out.lastIndex = uint32_t(i); out.lastOffset = offset;
+        out.lastValue = 0; out.lastReadSucceeded = false;
+        if (!io.valid(io.context)) return out.status = GuardInventoryStatus::AccessDenied;
+        const size_t slot = end ? 0 : i / 32;
+        const uint32_t bit = UINT32_C(1) << (end ? 0 : i % 32);
+        if (end) out.sosAfterAttempted = true; else out.attempted[slot] |= bit;
+        ++out.reads; uint32_t value = 0;
+        if (!io.read32(io.context, offset, value)) return out.status = GuardInventoryStatus::ReadFailed;
+        out.lastValue = value; out.lastReadSucceeded = true;
+        if (end) { out.sosAfter = value; out.sosAfterReadSucceeded = true; }
+        else { out.values[i] = value; out.readSucceeded[slot] |= bit; }
+        if (!io.valid(io.context)) return out.status = GuardInventoryStatus::AccessDenied;
+        if (value == UINT32_MAX) return out.status = GuardInventoryStatus::DeviceUnavailable;
+        if (end) out.sosAfterValid = true; else out.valid[slot] |= bit;
+        if (!end && out.guardMasks[i]) {
+            out.guardCompared[slot] |= bit;
+            if ((value & out.guardMasks[i]) != out.guardExpected[i]) out.guardMismatch[slot] |= bit;
+        }
+        if ((i == Sos || end) && value) return out.status = GuardInventoryStatus::PriorDriverRequiresReset;
+        if (i == GfxArchitecture) {
+            out.architectureCompared = true;
+            out.rs64 = (out.values[MecIsa] & 1) != 0;
+            out.architectureMatch = (value & 1) == (out.values[MecIsa] & 1);
+        }
+    }
+    out.complete = true; return out.status = GuardInventoryStatus::Ok;
+}
+const char* guardInventoryStatusString(GuardInventoryStatus s) {
+    switch (s) {
+#define NAME(x) case GuardInventoryStatus::x: return #x
+    NAME(Ok); NAME(InvalidArgument); NAME(LayoutRejected); NAME(AccessDenied);
+    NAME(ReadFailed); NAME(DeviceUnavailable); NAME(PriorDriverRequiresReset);
+#undef NAME
+    } return "Unknown";
+}
+
 Status quiesceCpSdma(const Navi31IpLayout& layout, uint64_t barBytes,
                     const Io& io, const PollOptions& poll, Result& out) {
     out = Result{}; out.stage = Stage::Preflight;

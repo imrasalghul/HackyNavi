@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>org.hackynavi.driver.HackyNaviAccelerator</string>
+    <key>CFBundleName</key><string>HackyNaviAccelerator</string>
+    <key>CFBundleExecutable</key><string>HackyNaviAccelerator</string>
+    <key>CFBundlePackageType</key><string>KEXT</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleVersion</key><string>0.1.0</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>HackyNavi late accelerator</key>
+        <dict>
+            <key>CFBundleIdentifier</key><string>org.hackynavi.driver.HackyNaviAccelerator</string>
+            <key>IOClass</key><string>HackyNaviAccelerator</string>
+            <key>IOProviderClass</key><string>HackyNaviDevice</string>
+            <key>IOMatchCategory</key><string>HackyNaviAccelerator</string>
+            <key>IOPropertyMatch</key>
+            <dict><key>HackyNaviAcceleratorReady</key><true/></dict>
+        </dict>
+    </dict>
+    <!-- This bundle belongs to late loading/AuxKC, never OpenCore Kernel/Add. -->
+    <key>OSBundleLibraries</key>
+    <dict>
+        <key>com.apple.kpi.iokit</key><string>24.0.0</string>
+        <key>com.apple.kpi.libkern</key><string>24.0.0</string>
+        <key>com.apple.kpi.mach</key><string>24.0.0</string>
+        <key>com.apple.iokit.IOGraphicsFamily</key><string>2.4.1</string>
+    </dict>
+</dict>
+</plist>

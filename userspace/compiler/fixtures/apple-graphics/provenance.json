@@ -1,0 +1,100 @@
+{
+  "success": true,
+  "prepared_only": false,
+  "stage": "/Users/victor/Library/Caches/HackyNavi-AppleGraphics-e3f7c04015f84bf2aef7bb5b2ce6eec6",
+  "stage_removed": true,
+  "source_path": "userspace/compiler/fixtures/apple-graphics/triangle.metal",
+  "source_sha256": "3251b2911083649660f652f6f37a85d0e625c652fde787b898d3293636072101",
+  "source_bytes": 730,
+  "capture_runner_sha256": "855c78d21a903a3d3b122e0b775cb1dc3c5d3365dd2d761c493f35bec5c6a2d0",
+  "remote_script_sha256": "24cd8e8506eb6781201c27c731a502ff7fb93c444e7f99eb1a7296a745561445",
+  "gpu_execution": false,
+  "metal_objects_created": false,
+  "installation_performed": false,
+  "ssh_exit_code": 0,
+  "commands": [
+    {
+      "argv": [
+        "sw_vers"
+      ],
+      "exit_code": 0,
+      "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t15.8\nBuildVersion:\t\t24H22\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metal",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "Apple metal version 32023.864 (metalfe-32023.864)\nTarget: air64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Users/victor/Library/Developer/DVTDownloads/MetalToolchain/mounts/058e1b31129b642e40598a87b55aa54b2a29e538/Metal.xctoolchain/usr/metal/current/bin\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metal",
+        "-std=macos-metal2.4",
+        "-mmacosx-version-min=15.0",
+        "-c",
+        "graphics.metal",
+        "-o",
+        "graphics.air"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metallib",
+        "graphics.air",
+        "-o",
+        "graphics.metallib"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "error": null,
+  "terminal": true,
+  "stage_bytes": 10764,
+  "artifacts": {
+    "graphics.metal": {
+      "bytes": 730,
+      "sha256": "3251b2911083649660f652f6f37a85d0e625c652fde787b898d3293636072101"
+    },
+    "graphics.air": {
+      "bytes": 3680,
+      "sha256": "f1b28d7b90aab6d814a7cb3f46484c5458e2ff7d4f8b7a1d3cd7f2706f5ead8c"
+    },
+    "graphics.metallib": {
+      "bytes": 6354,
+      "sha256": "b99ae2fa65e9cfda2e13c146434fee1f0c0ef0cd2956beeba1cec01750641197"
+    }
+  },
+  "export_hashes_verified": true,
+  "cleanup_exit_code": 0,
+  "cleanup_stdout": "removed\n",
+  "cleanup_stderr": "",
+  "source_unchanged": true,
+  "capture_report_sha256": "1500bbf4f1abada5caae11aa7bb04a92e9c9a258167390d3d63b0e01fdbda0d9",
+  "integration_report_sha256": "ab4924076248edc331627f2b5cbdb60590ed8bc1e63d886e77951ba74b88fc4a",
+  "source_license": "Authored HackyNavi fixture, MIT",
+  "scope": "Offline Apple compilation and actual translation/ACO; no Metal objects or GPU execution."
+}

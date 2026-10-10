@@ -30,7 +30,7 @@ struct cs_section_def { const cs_extent_def* section; unsigned id; };
 // Verbatim AMD table from the pin above; its full copyright/license is retained.
 #include "gfx11_clearstate_data.hpp"
 enum Reg { Select,MeControl,MecControl,PfpPc,PfpPcHi,MePc,MePcHi,MecPc,MecPcHi,
-    CpStatus,Bootload,Mes,ImuReset,GfxIsa,MecIsa,Tcp,Grbm,DbRing,ShMem,
+    CpStatus,Bootload,Mes,ImuReset,GfxIsa,MecIsa,Tcp,Grbm,DbRing,ShMem,ShBases,
     CsbHi,CsbLo,CsbLength,Srm,VmContext, Gds=VmContext+16, Count=Gds+15*4 };
 struct Registers { uint32_t r[Count]; };
 enum RetireReg { RlcControl,SafeMode,GpmStatus,SrmStatus,SrmCommandStatus,RlcStatus,Utcl1Status,
@@ -46,8 +46,8 @@ uint32_t packet(uint32_t op,uint32_t count) { return 0xc0000000U|(count<<16)|(op
 Status resolve(const Navi31IpLayout& ip,uint64_t bytes,Registers& out) {
     if(!gcValid(ip))return Status::UnsupportedLayout;
     const uint32_t offsets[]={0x900,0x803,0x2904,0x1e44,0x1e59,0x1e45,0x1e79,0x2900,0x2938,
-        0xf40,0x4e82,0x2807,0x40bc,0x2a00,0x2903,0x19a2,0xda0,0x13bb,0x9e4,0x988,0x987,0x989,0x4c80};
-    const uint32_t bases[]={1,1,1,0,0,0,0,1,1,0,1,1,1,1,1,1,0,0,1,1,1,1,1};
+        0xf40,0x4e82,0x2807,0x40bc,0x2a00,0x2903,0x19a2,0xda0,0x13bb,0x9e4,0x9e3,0x988,0x987,0x989,0x4c80};
+    const uint32_t bases[]={1,1,1,0,0,0,0,1,1,0,1,1,1,1,1,1,0,0,1,1,1,1,1,1};
     for(unsigned i=0;i<Count;++i) {
         uint32_t off=0,base=0;
         if(i<VmContext) { off=offsets[i]; base=bases[i]; }
@@ -152,6 +152,38 @@ bool drainRlc(const Io& io,const RetirementIo& retirement,const RetirementPollOp
     }
     finish(r,Status::QuiesceTimeout); return false;
 }
+bool validRetirement(const RetirementIo& io,const RetirementPollOptions& p) {
+    return io.read32&&io.write32&&io.delayUs&&p.iterations&&p.intervalUs&&
+        p.iterations<=1000000&&p.intervalUs<=1000&&uint64_t(p.iterations)*p.intervalUs<=10000000;
+}
+Status retirementRegisters(const Navi31IpLayout& ip,uint64_t bytes,Registers& regs,RetireRegisters& extra) {
+    Status status=resolve(ip,bytes,regs);
+    if(status!=Status::Ok)return status;
+    status=resolveRetirement(ip,bytes,extra);
+    if(status!=Status::Ok)return status;
+    for(unsigned i=0;i<RetireCount;++i)for(unsigned j=0;j<Count;++j)
+        if(extra.r[i]==regs.r[j])return Status::UnsupportedLayout;
+    return Status::Ok;
+}
+bool stopAndDrainRlc(const Io& io,const RetirementIo& retirement,const RetirementPollOptions& p,
+    const Registers& regs,const RetireRegisters& extra,Result& r) {
+    uint32_t enabled=0;
+    if(!read(io,extra.r[RlcControl],enabled,r))return false;
+    if(enabled&1) {
+        r.stage=Stage::EnterSafeMode;
+        // Do not overwrite another RLC command. Linux enters safe mode with
+        // CMD=1,MESSAGE=1 and completion is CMD clearing in hardware.
+        if(!matches(io,extra.r[SafeMode],1,0,r,Status::ActiveEngine)||
+            !write(io,extra.r[SafeMode],3,r)||
+            !waitMasked(io,retirement,p,extra.r[SafeMode],1,0,r))return false;
+    }
+    r.stage=Stage::DrainRlc;
+    return rmw(io,extra.r[RlcControl],1,0,r)&&drainRlc(io,retirement,p,regs,extra,r);
+}
+bool noCsbOrSrm(const Registers& regs,const Io& io,Result& r) {
+    return matches(io,regs.r[CsbHi],UINT32_MAX,0,r)&&matches(io,regs.r[CsbLo],UINT32_MAX,0,r)&&
+        matches(io,regs.r[CsbLength],UINT32_MAX,0,r)&&matches(io,regs.r[Srm],3,0,r);
+}
 } // namespace
 
 Status encodeClearState(const Navi31IpLayout& ip,uint8_t* bytes,size_t size) {
@@ -234,6 +266,20 @@ struct Access {
         if(!rmw(io,regs.r[Grbm],0xff,0xff,r) ||
             !rmw(io,regs.r[DbRing],3,1,r) || // One active graphics pipe: counters go to pipe0.
             !store(io,regs.r[Select],0,r) || !store(io,regs.r[ShMem],0xc00c,r))return finish(s,r,r.status);
+        // Linux gfx_v11_0_constants_init programs SH_MEM for every graphics
+        // VMID. Our actual VM owner admits only 1..7, all inactive above.
+        // gmc_v11_0_early_init: private=0x1000000000000000,
+        // shared=0x2000000000000000; SH_MEM_BASES takes address bits63:48.
+        // These 4GiB special apertures cannot overlap our low47 GPU VA range.
+        // Do not use KFD's different aperture or enable its trap policy here.
+        // VMID0's existing config/bases policy is unchanged. Every selector
+        // write and both banked registers have an exact independent readback.
+        for(unsigned vmid=1;vmid<=7;++vmid) {
+            if(!store(io,regs.r[Select],vmid<<4,r) ||
+                !store(io,regs.r[ShMem],0xc00c,r) ||
+                !store(io,regs.r[ShBases],0x20001000,r))return finish(s,r,r.status);
+        }
+        if(!store(io,regs.r[Select],0,r))return finish(s,r,r.status);
         for(unsigned i=Gds;i<Count;++i)if(!store(io,regs.r[i],0,r))return finish(s,r,r.status);
         r.stage=Stage::ClearStatePointer; s.retained_=true; s.csb_=csb;
         if(!store(io,regs.r[CsbHi],uint32_t(mc>>32),r) || !store(io,regs.r[CsbLo],uint32_t(mc),r) ||
@@ -247,16 +293,10 @@ struct Access {
         State& s,Result& r) {
         r=Result{};
         if(!s.ready_ || !s.retained_ || s.retirementStarted_ || !smu.awake())return finish(s,r,Status::InvalidState);
-        if(!retirement.read32 || !retirement.write32 || !retirement.delayUs || !p.iterations ||
-            !p.intervalUs || p.iterations>1000000 || p.intervalUs>1000 ||
-            uint64_t(p.iterations)*p.intervalUs>10000000)return finish(s,r,Status::InvalidArgument);
+        if(!validRetirement(retirement,p))return finish(s,r,Status::InvalidArgument);
         Registers regs={}; RetireRegisters extra={};
-        Status resolved=resolve(ip,barBytes,regs);
+        const Status resolved=retirementRegisters(ip,barBytes,regs,extra);
         if(resolved!=Status::Ok)return finish(s,r,resolved);
-        resolved=resolveRetirement(ip,barBytes,extra);
-        if(resolved!=Status::Ok)return finish(s,r,resolved);
-        for(unsigned i=0;i<RetireCount;++i)for(unsigned j=0;j<Count;++j)
-            if(extra.r[i]==regs.r[j])return finish(s,r,Status::UnsupportedLayout);
         VramRange range={}; uint64_t mc=0,physical=0;
         if(allocator.lookup(s.csb_,range)!=VramAllocatorStatus::Ok || range.bytes<4096 ||
             allocator.addresses(s.csb_,mc,physical)!=VramAllocatorStatus::Ok || (mc&4095))
@@ -269,18 +309,7 @@ struct Access {
             !matches(io,regs.r[CsbHi],UINT32_MAX,uint32_t(mc>>32),r) ||
             !matches(io,regs.r[CsbLo],UINT32_MAX,uint32_t(mc),r) ||
             !matches(io,regs.r[CsbLength],UINT32_MAX,kClearStateDwords,r))return finish(s,r,r.status);
-        uint32_t enabled=0;
-        if(!read(io,extra.r[RlcControl],enabled,r))return finish(s,r,r.status);
-        if(enabled&1) {
-            r.stage=Stage::EnterSafeMode;
-            // Do not overwrite another RLC command. Linux enters safe mode
-            // with CMD=1,MESSAGE=1 and completion is CMD clearing in hardware.
-            if(!matches(io,extra.r[SafeMode],1,0,r,Status::ActiveEngine) ||
-                !write(io,extra.r[SafeMode],3,r) ||
-                !waitMasked(io,retirement,p,extra.r[SafeMode],1,0,r))return finish(s,r,r.status);
-        }
-        r.stage=Stage::DrainRlc;
-        if(!rmw(io,extra.r[RlcControl],1,0,r) || !drainRlc(io,retirement,p,regs,extra,r))return finish(s,r,r.status);
+        if(!stopAndDrainRlc(io,retirement,p,regs,extra,r))return finish(s,r,r.status);
         r.stage=Stage::DisableSrm;
         if(!rmw(io,regs.r[Srm],3,0,r) || !drainRlc(io,retirement,p,regs,extra,r) ||
             !retirementGuards(regs,extra,io,r))return finish(s,r,r.status);
@@ -292,6 +321,27 @@ struct Access {
             !drainRlc(io,retirement,p,regs,extra,r) || !retirementGuards(regs,extra,io,r))return finish(s,r,r.status);
         s.retained_=false; r.stage=Stage::Complete; return finish(s,r,Status::Ok);
     }
+    static Status retireAutoload(const Navi31IpLayout& ip,uint64_t barBytes,const gfxfw::State& firmware,
+        const smu::State& smu,const RetirementIo& retirement,const RetirementPollOptions& p,
+        AutoloadRetirement& s,Result& r) {
+        r=Result{};
+        if(s.attempted_||!firmware.autoloadComplete()||!smu.awake())return gfxinit::finish(r,Status::InvalidState);
+        if(!validRetirement(retirement,p))return gfxinit::finish(r,Status::InvalidArgument);
+        Registers regs={}; RetireRegisters extra={};
+        const Status resolved=retirementRegisters(ip,barBytes,regs,extra);
+        if(resolved!=Status::Ok)return gfxinit::finish(r,resolved);
+        const Io io={retirement.context,retirement.read32,retirement.write32};
+        s.attempted_=true; r.stage=Stage::RetireGuard;
+        if(!retirementGuards(regs,extra,io,r)||!noCsbOrSrm(regs,io,r)||
+            !stopAndDrainRlc(io,retirement,p,regs,extra,r))return r.status;
+        r.stage=Stage::RetireGuard;
+        // Never write CSIB/SRM in this path. A change from the original zero
+        // binding or disabled SRM is unknown ownership and retains firmware.
+        if(!noCsbOrSrm(regs,io,r)||!matches(io,extra.r[RlcControl],1,0,r)||
+            !retirementGuards(regs,extra,io,r)||!drainRlc(io,retirement,p,regs,extra,r)||
+            !noCsbOrSrm(regs,io,r))return r.status;
+        s.complete_=true; r.stage=Stage::Complete; return gfxinit::finish(r,Status::Ok);
+    }
 };
 Status prepare(const Navi31IpLayout& ip,const gfxfw::Files& files,const gfxfw::State& firmware,
     const smu::State& smu,const VramAllocator& allocator,VramAllocationHandle csb,uint8_t* scratch,size_t scratchBytes,
@@ -301,6 +351,11 @@ Status prepare(const Navi31IpLayout& ip,const gfxfw::Files& files,const gfxfw::S
 Status retireClearState(const Navi31IpLayout& ip,uint64_t barBytes,const smu::State& smu,
     const VramAllocator& allocator,const RetirementIo& io,const RetirementPollOptions& p,State& state,Result& result) {
     return Access::retire(ip,barBytes,smu,allocator,io,p,state,result);
+}
+Status retireAutoloadRlc(const Navi31IpLayout& ip,uint64_t barBytes,const gfxfw::State& firmware,
+    const smu::State& smu,const RetirementIo& io,const RetirementPollOptions& p,
+    AutoloadRetirement& state,Result& result) {
+    return Access::retireAutoload(ip,barBytes,firmware,smu,io,p,state,result);
 }
 const char* statusString(Status s) {
     switch(s) {

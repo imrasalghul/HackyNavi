@@ -1,0 +1,110 @@
+{
+  "source_path": "userspace/metal/tests/fixtures/add_one.metal",
+  "source_sha256": "7d472226764b4873b7722cf1a6449d3e62f7ea616e1d884c7074a466107db884",
+  "source_bytes": 310,
+  "gpu_execution": false,
+  "installation_performed": false,
+  "stage_removed": true,
+  "remote_script_sha256": "12a8d9e4272cc68aa452af8f30686c0e471064caad5b3da92cd63c9c4c1b960e",
+  "ssh_exit_code": 0,
+  "stage": "/Users/victor/Library/Caches/HackyNavi-AppleCompute-9ftfl2ad",
+  "commands": [
+    {
+      "argv": [
+        "sw_vers"
+      ],
+      "exit_code": 0,
+      "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t15.8\nBuildVersion:\t\t24H22\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metal",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "Apple metal version 32023.864 (metalfe-32023.864)\nTarget: air64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Users/victor/Library/Developer/DVTDownloads/MetalToolchain/mounts/058e1b31129b642e40598a87b55aa54b2a29e538/Metal.xctoolchain/usr/metal/current/bin\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metal",
+        "-std=macos-metal2.4",
+        "-mmacosx-version-min=15.0",
+        "-c",
+        "add_one.metal",
+        "-o",
+        "add_one.air"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metallib",
+        "add_one.air",
+        "-o",
+        "add_one.metallib"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "error": null,
+  "stage_bytes": 7331,
+  "artifacts": {
+    "add_one.metal": {
+      "bytes": 310,
+      "sha256": "7d472226764b4873b7722cf1a6449d3e62f7ea616e1d884c7074a466107db884"
+    },
+    "add_one.air": {
+      "bytes": 3424,
+      "sha256": "40b3308114c0fd8bf39e0fef68b2389bc45a5a6bbfa8d898c54840150469ef1d"
+    },
+    "add_one.metallib": {
+      "bytes": 3597,
+      "sha256": "ed77099cd3e56ac404331fa68dd9401a7b326a7b7ea80d942b29b8b1fe0af865"
+    }
+  },
+  "export_hashes_verified": true,
+  "cleanup_exit_code": 0,
+  "cleanup_stdout": "removed\n",
+  "cleanup_stderr": "",
+  "capture_report_sha256": "df0b2d8d1a3e70c700e28993408843ba99616e6f10ae206cc65269ca1fb03386",
+  "source_license": "Authored HackyNavi fixture, MIT",
+  "container_header": {
+    "version": [
+      2,
+      8
+    ],
+    "target_bytes_11_to_15": "810f000000",
+    "air_version": [
+      2,
+      7
+    ],
+    "language_version": [
+      2,
+      4
+    ],
+    "wrapped_air_bytes": 3360,
+    "raw_air_bytes": 3332,
+    "raw_air_sha256": "8d5c89281870b3d1f8f6868ad56f9396fdd8804acc697c59297c9f338889a13f"
+  }
+}

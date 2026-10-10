@@ -1,0 +1,96 @@
+{
+  "success": true,
+  "prepared_only": false,
+  "stage": "/Users/victor/Library/Caches/HackyNavi-AppleVertexBuffer-1ab0fa31663b42f6849e0d5a9885ff68",
+  "stage_removed": true,
+  "source_path": "userspace/compiler/fixtures/apple-vertex-buffer/vertex-buffer.metal",
+  "source_sha256": "faae84fb7b55cf72c7d1bd14cc93d3f570ca18146567d915624b296bd4fce4fb",
+  "source_bytes": 440,
+  "capture_runner_sha256": "15f855815b5b99a3aa0bb6b1d65b4b89c8f338cfa9270ee60eaadb921d0f2f0c",
+  "remote_script_sha256": "11eca613660970aba0bdc6b11d26991af8f9129ca70d4f6d45fe7542687ac193",
+  "gpu_execution": false,
+  "metal_objects_created": false,
+  "installation_performed": false,
+  "ssh_exit_code": 0,
+  "commands": [
+    {
+      "argv": [
+        "sw_vers"
+      ],
+      "exit_code": 0,
+      "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t15.8\nBuildVersion:\t\t24H22\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metal",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "Apple metal version 32023.864 (metalfe-32023.864)\nTarget: air64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Users/victor/Library/Developer/DVTDownloads/MetalToolchain/mounts/058e1b31129b642e40598a87b55aa54b2a29e538/Metal.xctoolchain/usr/metal/current/bin\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metal",
+        "-std=macos-metal2.4",
+        "-mmacosx-version-min=15.0",
+        "-c",
+        "vertex-buffer.metal",
+        "-o",
+        "vertex-buffer.air"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metallib",
+        "vertex-buffer.air",
+        "-o",
+        "vertex-buffer.metallib"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "error": null,
+  "terminal": true,
+  "stage_bytes": 7374,
+  "artifacts": {
+    "vertex-buffer.metal": {
+      "bytes": 440,
+      "sha256": "faae84fb7b55cf72c7d1bd14cc93d3f570ca18146567d915624b296bd4fce4fb"
+    },
+    "vertex-buffer.air": {
+      "bytes": 3392,
+      "sha256": "bc8be8f9da5a3644e9b159f5d40f1768b2195a14f41a0f4ad471c8f6df506027"
+    },
+    "vertex-buffer.metallib": {
+      "bytes": 3542,
+      "sha256": "a98e9a44782d8de99124e71ac5ff52477880005471ff2029648b3d5da9cd43f4"
+    }
+  },
+  "export_hashes_verified": true,
+  "cleanup_exit_code": 0,
+  "cleanup_stdout": "removed\n",
+  "cleanup_stderr": "",
+  "source_unchanged": true
+}

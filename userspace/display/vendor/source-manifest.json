@@ -1,0 +1,127 @@
+{
+  "repository": "https://github.com/torvalds/linux",
+  "revision": "3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0",
+  "license": "MIT (retained per-file AMD notices)",
+  "files": [
+    {
+      "path": "calcs/dcn_calc_math.c",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/calcs/dcn_calc_math.c",
+      "sha256": "c0b12593a7df24e1550388ae8864a2ea929b8627b42121fdda3e0dc35dcb3a27",
+      "bytes": 3662
+    },
+    {
+      "path": "calcs/dcn_calc_math.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/inc/dcn_calc_math.h",
+      "sha256": "197baec4d0046cd7d9989d59aca71f78eb44e805c8a76ff8e1a50a7ff3a2fd69",
+      "bytes": 1903
+    },
+    {
+      "path": "dc_features.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dc_features.h",
+      "sha256": "b260a3372550dabc84827b5d0b4fd041ac8a86a46cca37caceba2714ce304e41",
+      "bytes": 19614
+    },
+    {
+      "path": "dcn32/display_mode_vba_32.c",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dcn32/display_mode_vba_32.c",
+      "sha256": "6e17a448d4dbc5e1ee446e0dcec25f32613499325e0333a8fd936c349d140316",
+      "bytes": 184325
+    },
+    {
+      "path": "dcn32/display_mode_vba_32.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dcn32/display_mode_vba_32.h",
+      "sha256": "cf372ca518a988899103b9147b5c9203c5969a2565ea39e85ceae18a7fb31a87",
+      "bytes": 2302
+    },
+    {
+      "path": "dcn32/display_mode_vba_util_32.c",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dcn32/display_mode_vba_util_32.c",
+      "sha256": "6fc9d6ae168a7ed751f2d063175cbed1477fd752b78225d0f892f40363cd1e39",
+      "bytes": 269287
+    },
+    {
+      "path": "dcn32/display_mode_vba_util_32.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dcn32/display_mode_vba_util_32.h",
+      "sha256": "e8b1d101cef90b96fac183d0d01c7722c3fa7bf10a15ec6dd864ab87b95a4025",
+      "bytes": 39016
+    },
+    {
+      "path": "dcn32/display_rq_dlg_calc_32.c",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dcn32/display_rq_dlg_calc_32.c",
+      "sha256": "22bbdd4c99af9097d92aece598e465146e95ecbd0bc17124f0137ffa314e8283",
+      "bytes": 31043
+    },
+    {
+      "path": "dcn32/display_rq_dlg_calc_32.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dcn32/display_rq_dlg_calc_32.h",
+      "sha256": "3ab926d3cd43783cfb081f2c431d1eb5e5c49e333c0b73f0c8fdd4e8763fbea7",
+      "bytes": 2814
+    },
+    {
+      "path": "display_mode_enums.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/display_mode_enums.h",
+      "sha256": "df834baa143e1fb829f414d7db543d9b0fc1727c9865cf0b379781a5622bf546",
+      "bytes": 7755
+    },
+    {
+      "path": "display_mode_lib.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/display_mode_lib.h",
+      "sha256": "8ed6ea62183b272c5d438fa7e554e6a287ec9f5a064222483df302348d8e6b77",
+      "bytes": 3657
+    },
+    {
+      "path": "display_mode_structs.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/display_mode_structs.h",
+      "sha256": "ca9502b61904f9ac7595ba9d737ed6c3dc9b1bbb5eb7793e5cef51d2e2a2ac19",
+      "bytes": 24039
+    },
+    {
+      "path": "display_mode_vba.c",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/display_mode_vba.c",
+      "sha256": "928bd03b20cf79e2068655a7008ed06a6b2ac7cc332c9b6bf6ef1645a8851ca2",
+      "bytes": 56970
+    },
+    {
+      "path": "display_mode_vba.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/display_mode_vba.h",
+      "sha256": "039150b43937233c993c2ae42fe675bd3be64d42075416345c6415bd5679d0a4",
+      "bytes": 53993
+    },
+    {
+      "path": "display_rq_dlg_helpers.c",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/display_rq_dlg_helpers.c",
+      "sha256": "c1f1db623024499c771aa49e06dbaa37a72d135693dcc9f9789af8c80b6810c0",
+      "bytes": 17220
+    },
+    {
+      "path": "display_rq_dlg_helpers.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/display_rq_dlg_helpers.h",
+      "sha256": "99c1bb40283de770f4e7633f1dbc3670eb87b15434ca32bb47ee1ed69f2ef449",
+      "bytes": 2450
+    },
+    {
+      "path": "dml1_frl_cap_chk.c",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dml1_frl_cap_chk.c",
+      "sha256": "7932a806466eee0c8227b8b430614ceb9335c2904355ffb1dcf821b8a2a607b6",
+      "bytes": 28280
+    },
+    {
+      "path": "dml1_frl_cap_chk.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dml1_frl_cap_chk.h",
+      "sha256": "8573be4484688c2d5a7168bd950734fb157fe158349c4ee3a3e939ba4b1fc751",
+      "bytes": 5141
+    },
+    {
+      "path": "dml_inline_defs.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dml_inline_defs.h",
+      "sha256": "ece04970c29877356f005619fca2cb2d40615d8ed35ae1d3b867d2eae058968b",
+      "bytes": 3832
+    },
+    {
+      "path": "dml_logger.h",
+      "upstream_path": "drivers/gpu/drm/amd/display/dc/dml/dml_logger.h",
+      "sha256": "39388a48a95b6245a241c54ff39bcbb19059a26c7bc722931f0c855a2d5597cd",
+      "bytes": 1379
+    }
+  ]
+}

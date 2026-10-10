@@ -51,6 +51,10 @@ public:
     // page tables/rings. Destruction has the same precondition. Teardown errors
     // require treating the device as unusable; no DMA restart is safe to assume.
     IOReturn reset();
+    // First teardown failure, including cleanup performed inside a failed
+    // allocate(). Persists across empty reset/destruction and denies reuse.
+    // The enclosing owner must latch this before deleting a failed allocation.
+    IOReturn teardownFailure() const { return teardownFailure_; }
 
     void* cpuAddress() const { return ready_ ? cpuAddress_ : nullptr; }
     uint64_t size() const { return ready_ ? bytes_ : 0; }
@@ -85,6 +89,7 @@ private:
     MappingKind mappingKind_;
     bool memoryPrepared_;
     bool ready_;
+    IOReturn teardownFailure_;
 };
 
 #endif

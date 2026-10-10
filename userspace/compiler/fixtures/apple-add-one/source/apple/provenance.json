@@ -1,0 +1,140 @@
+{
+  "fixture": "add_one.air",
+  "source": "../add_one.metal",
+  "license": "MIT (generated from authored HackyNavi source)",
+  "compiler": "Apple metal version 32023.622 (metalfe-32023.622)",
+  "air_version": [
+    2,
+    7,
+    0
+  ],
+  "metal_language_version": [
+    2,
+    4,
+    0
+  ],
+  "target_triple": "air64-apple-macosx15.8.0",
+  "capture": {
+    "commands": [
+      {
+        "argv": [
+          "sw_vers"
+        ],
+        "exit_code": 0,
+        "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t15.8\nBuildVersion:\t\t24H22\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "df",
+          "-k",
+          "/Users/victor/Library/Caches"
+        ],
+        "exit_code": 0,
+        "stdout": "Filesystem   1024-blocks     Used Available Capacity iused     ifree %iused  Mounted on\n/dev/disk1s1   118181844 61040488  34248576    65% 1140012 342485760    0%   /System/Volumes/Data\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "xcrun",
+          "--sdk",
+          "macosx",
+          "metal",
+          "-std=macos-metal2.4",
+          "-c",
+          "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi/add_one.metal",
+          "-o",
+          "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi/add_one.air"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: error: cannot execute tool 'metal' due to missing Metal Toolchain; use: xcodebuild -downloadComponent MetalToolchain\n"
+      },
+      {
+        "argv": [
+          "xcrun",
+          "--sdk",
+          "macosx",
+          "clang",
+          "-arch",
+          "x86_64",
+          "-mmacosx-version-min=15.0",
+          "-fobjc-arc",
+          "-framework",
+          "Foundation",
+          "-framework",
+          "Metal",
+          "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi/capture_apple_air.m",
+          "-o",
+          "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi/capture-apple-air"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi/capture_apple_air.m:28:17: warning: 'fastMathEnabled' is deprecated: first deprecated in macOS 15.0 - Use mathMode instead [-Wdeprecated-declarations]\n   28 |         options.fastMathEnabled = NO;\n      |                 ^\n/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/Metal.framework/Headers/MTLLibrary.h:308:39: note: 'fastMathEnabled' has been explicitly marked deprecated here\n  308 | @property (readwrite, nonatomic) BOOL fastMathEnabled API_DEPRECATED(\"Use mathMode instead\", macos(10.11, 15.0), ios(8.0, 18.0));\n      |                                       ^\n1 warning generated.\n"
+      },
+      {
+        "argv": [
+          "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi/capture-apple-air",
+          "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi/add_one.metal",
+          "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi/add_one.air"
+        ],
+        "exit_code": 0,
+        "stdout": "Apple runtime compiler: device=Intel(R) UHD Graphics 630; function=add_one; MSL=2.4; AIR=3184 bytes\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "xcrun",
+          "--sdk",
+          "macosx",
+          "--show-sdk-path"
+        ],
+        "exit_code": 0,
+        "stdout": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk\n",
+        "stderr": ""
+      }
+    ],
+    "cleanup": true,
+    "staging": "/Users/victor/Library/Caches/HackyNavi-AppleAIR-142qwnpi",
+    "compiler_path": "system Metal runtime compiler, MTLFunction bitcodeData capture",
+    "staged_peak_bytes": 24035,
+    "files": {
+      "add_one.air": {
+        "bytes": 3184,
+        "sha256": "f8548fefe01df3e8fd479d0783be3527122b70674d54c4611c65ed0cdc8ce110"
+      },
+      "libiconv.tbd": {
+        "bytes": 3867,
+        "sha256": "63ee901a4d1f37a8dbe17bff52fa099080f2df44b840dfcc366c9f0c82abcf8f"
+      },
+      "libiconv.2.tbd": {
+        "bytes": 3867,
+        "sha256": "63ee901a4d1f37a8dbe17bff52fa099080f2df44b840dfcc366c9f0c82abcf8f"
+      }
+    },
+    "source_sha256": {
+      "add_one.metal": "7d472226764b4873b7722cf1a6449d3e62f7ea616e1d884c7074a466107db884",
+      "capture_apple_air.m": "56a29fa995bf6b8d588f15f144ab0aa772deb541dc5e9150fd5f5bdabf569c98"
+    }
+  },
+  "reader_validation": {
+    "reader_success": true,
+    "cleanup": true,
+    "staged_peak_bytes": 43500,
+    "reader_source_sha256": "6b68defebe1f4252d0352344aafcdab50078d37ec1ecab0a7c95d3d99e47d582",
+    "reader_binary": {
+      "bytes": 9256,
+      "sha256": "87c52ccc98bc20d7632cb4a04bc9bcaa39e0c4ba8c76a8e3781be8ef5d01dc4a"
+    },
+    "decoded_ir": {
+      "bytes": 3013,
+      "sha256": "87c1d17573bbdef95d02ae04a5ac24731f9ed1ac69c5eacc10e60606ea4b352d"
+    },
+    "spirv_equivalence": {
+      "identical_spirv": true,
+      "llvm20_spirv_sha256": "dc617a376ba9594f26dfb3b07656ef4a87236c5fb1ff387b02d0fdb8a59e2439",
+      "apple_reader_spirv_sha256": "dc617a376ba9594f26dfb3b07656ef4a87236c5fb1ff387b02d0fdb8a59e2439",
+      "native_ir_sha256": "87c1d17573bbdef95d02ae04a5ac24731f9ed1ac69c5eacc10e60606ea4b352d"
+    }
+  }
+}

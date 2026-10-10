@@ -15,7 +15,7 @@ struct Device {
     std::vector<uint8_t> scratch;
     std::map<uint64_t,uint32_t> banks;
     std::vector<Event> events;
-    uint32_t selector=0; size_t calls=0,failAt=0,mismatchAt=0;
+    uint32_t selector=0; size_t calls=0,failAt=0,mismatchAt=0,allOnesAt=0;
     Device():scratch(4096,0) {
         gfxfw::Result result={}; CHECK(hw.run(files.files(),firmware,result)==gfxfw::Status::Ok);
         hw.registers[(0xa000+0x40bc)*4]=0x1f;
@@ -30,7 +30,7 @@ struct Device {
     }
     static bool banked(uint32_t reg) {
         const uint32_t regs[]={0x1260*4+0x1e44*4,0x1260*4+0x1e59*4,0x1260*4+0x1e45*4,0x1260*4+0x1e79*4,
-            0xa000*4+0x2900*4,0xa000*4+0x2938*4};
+            0xa000*4+0x2900*4,0xa000*4+0x2938*4,0xa000*4+0x9e3*4,0xa000*4+0x9e4*4};
         for(auto r:regs)if(reg==r)return true; return false;
     }
     static bool read(void* context,uint32_t reg,uint32_t& value) {
@@ -40,6 +40,7 @@ struct Device {
         else good=Simulation::read(&s.hw,reg,value);
         if(reg!=0 && reg!=4 && reg!=0x18) {
             ++s.calls; if(s.calls==s.mismatchAt)value^=1;
+            if(s.calls==s.allOnesAt)value=UINT32_MAX;
             s.events.push_back({false,reg,value,s.selector});
             if(s.calls==s.failAt)good=false;
         }

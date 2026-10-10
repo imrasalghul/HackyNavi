@@ -1,0 +1,6 @@
+{
+  "abi_version": 1,
+  "metal_entry_point": "add_one",
+  "spirv_entry_point": "main",
+  "target_environment": "vulkan1.2"
+}

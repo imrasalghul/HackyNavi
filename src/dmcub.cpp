@@ -221,12 +221,27 @@ Status Inbox::wait(const PollOptions& p,Result& r) {
     r.submitted=true; return waitInternal(p,r);
 }
 Status Inbox::close(Result& r) {
+    const Status s=checkIdle(r);
+    if(s==Status::Ok)clearAfterVerifiedReset();
+    return s;
+}
+Status Inbox::checkIdle(Result& r) {
     r=Result{};
     if(phase_!=Phase::Open)return phase_==Phase::Faulted?Status::Faulted:Status::Closed;
     if(pending_)return Status::Busy;
     Status s=verify(r,false); if(s!=Status::Ok)return s==Status::Busy?fail(s):s;
     if(r.wptr!=producer_)return fail(Status::PointerCorrupt);
-    clearAfterVerifiedReset(); return Status::Ok;
+    return Status::Ok;
+}
+Status Inbox::disableFams(const PollOptions& p,Result& r) {
+    // dmub_cmd.h: four packed 12-byte pipe records after the 4-byte config;
+    // dc_dmub_srv_p_state_delegate(false, empty-context) leaves all52 payload
+    // bytes zero. This is the real disabled/no-stream command, not a reply.
+    // No returned-status field exists for it: send() requires real RPTR
+    // consumption while retaining all its ordinary mapping/ordering checks.
+    uint8_t cmd[kSlotBytes]={};
+    cmd[0]=76; cmd[1]=0; cmd[3]=52;
+    return send(cmd,p,r);
 }
 Status Inbox::transmitter(const Route& route,const Transmitter& t,const PollOptions& p,Result& r) {
     r=Result{};

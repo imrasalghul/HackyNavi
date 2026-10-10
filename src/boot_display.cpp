@@ -41,9 +41,16 @@ const uint32_t pipeOffsets[kPipeRegisterCount] = {
 constexpr uint32_t kPipeStride = 0xdc;
 // dcn32_hwseq.c167-196: domain0..3 correspond to HUBP0..3; PGFSM0 is
 // powered-on and2 powered-off. sh_mask.h2781-2813: PGFSM bits31:30;
-// desired power bit28. Do not enter a window with a requested gate transition.
+// desired power bit28. dcn32_hubp_pg_control writes CONFIG0 for ON and
+// waits only for current PGFSM0, independently of desired bit28. FORCEON
+// may be0 or1 when GATE is0. Preserve the raw desired bit for stability;
+// it neither establishes a completed OFF state nor requires FORCEON1.
+// The same current-state rule permits OFF PGFSM2 with desired0 or desired1;
+// only an exact GATE1/FORCEON0 request permits the cold OFF-window skip.
 const uint32_t powerOffsets[kPipeCount] = {0x81,0x83,0x85,0x87};
 constexpr uint64_t kPageMask = 4095;
+bool currentOn(uint32_t status) { return status==0 || status==0x10000000; }
+bool currentOff(uint32_t status) { return status==0x80000000 || status==0x90000000; }
 struct Dmu { uint64_t base1, base2,mp0; unsigned count,mp0Count; bool valid,mp0Valid; };
 void collect(const DiscoveryIp& ip, void* context) {
     Dmu& d = *static_cast<Dmu*>(context);
@@ -120,20 +127,37 @@ bool validLayout(const Layout& l) {
             if (l.pipe[p][i] != expected.pipe[p][i]) return false;
     return true;
 }
-Status read(const Io& io, uint32_t offset, uint32_t& value, Capture& out) {
+template<class Evidence>
+Status read(const Io& io, uint32_t offset, uint32_t& value, Evidence& out) {
     out.lastRegister = offset; ++out.readsAttempted;
-    if (!io.read32(io.context, offset, value)) return Status::TransportError;
+    out.lastValue = 0; out.lastReadSucceeded = false;
+    uint32_t observed = 0;
+    if (!io.read32(io.context, offset, observed)) return Status::TransportError;
+    value = observed; out.lastValue = observed; out.lastReadSucceeded = true;
     return value == UINT32_MAX ? Status::DeviceUnavailable : Status::Ok;
 }
 Status readPower(const Layout& l, const Io& io, size_t p, Snapshot& s, Capture& out,bool cold,bool first=false) {
     out.failedPipe = static_cast<uint8_t>(p);
+    out.lastPowerProbe = PowerProbe{};
+    PowerProbe& probe = out.lastPowerProbe;
+    probe.pipe = static_cast<uint8_t>(p);
     uint32_t power=0,config=0,after=0;
     Status status = read(io, l.power[p], power, out);
+    if (out.lastReadSucceeded) { probe.statusBefore = power; probe.readsSucceededMask |= 1; }
     if (status != Status::Ok) return status;
-    if(power!=0 && (!cold || power!=0x90000000))return Status::PowerUnavailable;
-    status=read(io,l.powerConfig[p],config,out);if(status!=Status::Ok)return status;
-    if(power?(config!=0x100):(config>1))return Status::PowerUnavailable;
-    status=read(io,l.power[p],after,out);if(status!=Status::Ok)return status;
+    if(!currentOn(power) && (!cold || !currentOff(power)))return Status::PowerUnavailable;
+    status=read(io,l.powerConfig[p],config,out);
+    if (out.lastReadSucceeded) { probe.config = config; probe.readsSucceededMask |= 2; }
+    if(status!=Status::Ok)return status;
+    // PGFSM0 plus an ungated request permits an ON observation with either
+    // FORCEON value. Do not require the desired bit to match: Linux waits
+    // on current PGFSM only, and the target reports desired1/CONFIG0.
+    // Explicit GATE, unknown bits and FORCEON+GATE remain rejected for ON.
+    if(currentOff(power) ? config!=0x100 : config>1)
+        return Status::PowerUnavailable;
+    status=read(io,l.power[p],after,out);
+    if (out.lastReadSucceeded) { probe.statusAfter = after; probe.readsSucceededMask |= 4; }
+    if(status!=Status::Ok)return status;
     if(after!=power)return Status::PowerUnavailable;
     if(!first && (s.power[p]!=power || s.powerConfig[p]!=config))return Status::UnstableSnapshot;
     s.power[p]=power;s.powerConfig[p]=config;
@@ -155,7 +179,7 @@ Status snapshot(const Layout& l, const Io& io, Snapshot& s, Capture& out,bool co
     }
     for (size_t p = 0; p < kPipeCount; ++p) {
         out.failedPipe = static_cast<uint8_t>(p);
-        if(s.power[p]==0x90000000)continue;
+        if(currentOff(s.power[p]))continue;
         for (size_t i = 0; i < kPipeRegisterCount; ++i) {
             Status status = readPower(l, io, p, s, out,cold);
             if (status != Status::Ok) return status;
@@ -197,10 +221,17 @@ bool stable(const Snapshot& a, const Snapshot& b, Capture& out) {
 bool framebufferMatches(const Snapshot& s, const MemoryLayout& m) {
     for (size_t i = 0; i < kGlobalRegisterCount; ++i)
         if (s.global[i] & 0xff000000U) return false;
-    return (uint64_t(s.global[0]) << 24) == m.mcWindowStart &&
-        ((uint64_t(s.global[1]) << 24) | 0xffffff) == m.mcWindowEndInclusive &&
-        (uint64_t(s.global[2]) << 24) == m.vramPageBaseOffset &&
-        s.global[3] > s.global[4]; // No active AGP translation aperture.
+    if ((uint64_t(s.global[0]) << 24) != m.mcWindowStart ||
+        ((uint64_t(s.global[1]) << 24) | 0xffffff) != m.mcWindowEndInclusive ||
+        (uint64_t(s.global[2]) << 24) != m.vramPageBaseOffset) return false;
+    // DCN_VM_AGP_BOT/TOP describe an inclusive 16MiB-granularity window
+    // (hubbub3_init_dchub_sys_ctx). Equal zero values are a real [0,16MiB)
+    // window, not a disabled encoding. Its translation cannot affect any
+    // admitted framebuffer address when the entire windows are disjoint.
+    // Reject overlap independently of AGP_BASE, which we do not observe.
+    return s.global[3] > s.global[4] ||
+        ((uint64_t(s.global[4]) << 24) | 0xffffff) < m.mcWindowStart ||
+        (uint64_t(s.global[3]) << 24) > m.mcWindowEndInclusive;
 }
 Status decodePlane(const uint32_t* p, const MemoryLayout& m, Plane& plane) {
     const uint32_t config = get(p, PipeRegister::SurfaceConfig);
@@ -214,21 +245,35 @@ Status decodePlane(const uint32_t* p, const MemoryLayout& m, Plane& plane) {
     // NUM_PIPES/NUM_PKRS and related topology are in separate ADDR_CONFIG.
     // META_LINEAR/PIPE_ALIGNED are metadata layout flags; no metadata surface
     // is fetched with both DCC enables clear below (hubp3_dcc_control). Retain
-    // exact SW_MODE0/DIM_TYPE0/reserved-bit checks for the data surface.
-    if ((config & ~0x7fU) || (get(p, PipeRegister::TilingConfig) & ~0xa00U) ||
+    // SW_MODE0 is linear. DIM_TYPE0/1 are 1D/2D; hubp3_program_tiling,
+    // used by DCN3.2, deliberately leaves this field unchanged. Both use
+    // the same row footprint here; 3D/reserved dimensions stay unsupported.
+    const uint32_t tiling = get(p, PipeRegister::TilingConfig);
+    if ((config & ~0x7fU) || (tiling & ~0xa80U) ||
         get(p, PipeRegister::SurfaceControl) != 0 ||
         (get(p, PipeRegister::RequestSize) & 7)) return Status::UnsupportedPlane;
-    // No lock/pending/stereo or deferred update policy. An immediate flip bit
-    // is harmless when no pending flip remains and all address views agree.
-    if ((get(p, PipeRegister::FlipControl) & ~2U) ||
+    // PENDING_DELAY and PENDING_MIN_TIME are timing configuration, distinct
+    // from SURFACE_FLIP_PENDING. Preserve their exact two-pass stability but
+    // allow them when no update is pending/locked. Stereo/GSL/triple remain
+    // unsupported. The immediate-flip type bit does not itself imply pending.
+    if ((get(p, PipeRegister::FlipControl) & ~0x3ff00002U) ||
         (get(p, PipeRegister::FlipControl2) & ~0x10ffU)) return Status::UnsupportedPlane;
+    // hubp3_set_vm_system_aperture_settings programs precisely this policy.
+    // TLB0 observed in firmware remains unsupported: legacy PA_ONLY names
+    // do not establish DCN3.2's address domain or MC-to-physical conversion.
     if (get(p, PipeRegister::Vmid) != 0 || get(p, PipeRegister::TlbControl) != 0x19)
         return Status::UnsupportedAddressMode;
     const uint32_t hi = get(p, PipeRegister::AddressHi);
-    if ((hi & 0xffff0000U) || get(p, PipeRegister::InUseHi) != hi ||
-        get(p, PipeRegister::EarliestHi) != hi ||
-        get(p, PipeRegister::InUseLo) != get(p, PipeRegister::AddressLo) ||
+    // DCN3.2 uses hubp2_is_flip_pending: no pending bit and EARLIEST_INUSE
+    // equals the requested address. Ordinary INUSE is a separate latched
+    // view when RAED_NO_LATCH=0; it can be stale without an outstanding flip.
+    // If reads explicitly bypass that latch, require agreement as well.
+    if ((hi & 0xffff0000U) || get(p, PipeRegister::EarliestHi) != hi ||
         get(p, PipeRegister::EarliestLo) != get(p, PipeRegister::AddressLo))
+        return Status::UnsupportedAddressMode;
+    if ((get(p, PipeRegister::FlipControl2) & 0x1000) &&
+        (get(p, PipeRegister::InUseHi) != hi ||
+         get(p, PipeRegister::InUseLo) != get(p, PipeRegister::AddressLo)))
         return Status::UnsupportedAddressMode;
     plane.surfaceMcAddress = (uint64_t(hi) << 32) | get(p, PipeRegister::AddressLo);
     const uint32_t pitch = get(p, PipeRegister::Pitch);
@@ -282,8 +327,26 @@ Status buildLayout(const uint8_t* data, size_t bytes, uint64_t barBytes, Layout&
     out = l;
     return Status::Ok;
 }
+Status inventoryPower(const Layout& l,const Io& io,PowerInventory& out) {
+    out=PowerInventory{};out.failedPipe=0xff;
+    for(size_t p=0;p<kPipeCount;++p)out.probes[p].pipe=0xff;
+    if(!io.read32 || !validLayout(l))return Status::InvalidArgument;
+    for(size_t p=0;p<kPipeCount;++p) {
+        out.failedPipe=static_cast<uint8_t>(p);
+        PowerProbe& probe=out.probes[p];probe.pipe=static_cast<uint8_t>(p);
+        uint32_t* values[]={&probe.statusBefore,&probe.config,&probe.statusAfter};
+        const uint32_t offsets[]={l.power[p],l.powerConfig[p],l.power[p]};
+        for(size_t phase=0;phase<3;++phase) {
+            const Status status=read(io,offsets[phase],*values[phase],out);
+            if(out.lastReadSucceeded)probe.readsSucceededMask|=static_cast<uint8_t>(1U<<phase);
+            if(status!=Status::Ok)return status;
+        }
+    }
+    out.failedPipe=0xff;return Status::Ok;
+}
 static Status captureImpl(const Layout& l, const MemoryLayout& m, const Io& io, Capture& out,bool cold) {
     out = Capture{}; out.failedPipe = 0xff;
+    out.lastPowerProbe.pipe = 0xff;
     uint64_t checked = 0;
     if (!io.read32 || !validLayout(l) || (cold && !l.sos) ||
         vramMcAddress(m, 0, m.vramBytes, checked) != MemoryLayoutStatus::Ok ||
@@ -308,12 +371,13 @@ static Status captureImpl(const Layout& l, const MemoryLayout& m, const Io& io, 
     if (status != Status::Ok) return status;
     if(cold){status=checkSos();if(status!=Status::Ok)return status;}
     if (!stable(out.snapshot, second, out)) return Status::UnstableSnapshot;
+    out.snapshotReadComplete = true;
     for (size_t i = 0; i < kVgaCount; ++i)
         if (out.snapshot.vga[i] & 1) return Status::LegacyVga;
     Plane planes[kPipeCount]{}; size_t count = 0;
     for (size_t p = 0; p < kPipeCount; ++p) {
         out.failedPipe = static_cast<uint8_t>(p);
-        if(out.snapshot.power[p]==0x90000000)continue;
+        if(currentOff(out.snapshot.power[p]))continue;
         const uint32_t* first = out.snapshot.pipe[p];
         const uint32_t control = get(first, PipeRegister::Control);
         // Cursor/DMDATA can add independent memory fetches; never ignore them.
@@ -332,7 +396,7 @@ static Status captureImpl(const Layout& l, const MemoryLayout& m, const Io& io, 
         ++count;
     }
     for (size_t i = 0; i < count; ++i) out.planes[i] = planes[i];
-    for(size_t p=0;p<kPipeCount;++p)if(out.snapshot.power[p]==0x90000000)out.poweredOffMask|=uint8_t(1U<<p);
+    for(size_t p=0;p<kPipeCount;++p)if(currentOff(out.snapshot.power[p]))out.poweredOffMask|=uint8_t(1U<<p);
     out.planeCount = count; out.complete = true; out.failedPipe = 0xff;
     return Status::Ok;
 }

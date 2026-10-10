@@ -22,13 +22,22 @@ struct Result { Status status; Stage stage; uint32_t reads,writes,polls,lastRegi
 struct Access;
 class State {
 public:
-    State():phase_(Phase::Fresh),config_{},memory_{},regs_{},producer_(0),sequence_(0),pending_(false),retain_(false) {}
+    State():phase_(Phase::Fresh),config_{},memory_{},regs_{},producer_(0),sequence_(0),pending_(false),retain_(false),startAttempted_(false) {}
     State(const State&)=delete; State& operator=(const State&)=delete;
     Phase phase() const { return phase_; } bool pending() const { return pending_; }
     bool needsRetention() const { return retain_; } uint32_t producerWords() const { return producer_; }
+    // True only before any start hardware callback, with no producer, fence,
+    // pending submission or retained queue bindings. Failed preflight leaves
+    // this true; an attempted start never does. Read under the owner lock.
+    // This is no CSIB/RLC, VM, hardware-idle or allocation-release authority.
+    bool neverPublished() const;
+    // Nonmutating preflight before publishing another VM. Requires the same
+    // owner lock as submission; success grants no hardware/retirement proof.
+    // The submission guard repeats this check before touching the real ring.
+    Status submissionCapacity() const;
 private:
     Phase phase_; Config config_; Memory memory_; uint32_t regs_[32],producer_,sequence_;
-    bool pending_,retain_; friend struct Access;
+    bool pending_,retain_,startAttempted_; friend struct Access;
 };
 // Actual legacy GC11 pipe0 VMID0 queue, MMIO WPTR and no doorbell/interrupt.
 // Requires prepared GC/CSB plus disabled-GFXOFF SMU on the same reset epoch.
@@ -50,11 +59,22 @@ Status start(const Navi31IpLayout&,uint64_t barBytes,const gfxinit::State&,
 // Caller validates commands and every referenced allocation. Dword-aligned,
 // 1..1048575DWORDs; does not set compute-only IB VALID on this graphics path.
 Status submitIndirect(const Io&,State&,uint64_t ibGpu,uint32_t words,Result&);
+// Trusted native capture path only: immutable validated IB in an owned VMID1..7
+// page tree on both hubs, all other producers excluded. This primitive does
+// NOT validate PM4 or establish residency; HackyNaviGraphicsQueue admits only
+// its private canonical capture. Appends CS drain/PFP sync before real fence.
+Status submitIsolatedIndirect(const Io&,State&,uint8_t vmid,uint64_t ibGpu,uint32_t words,Result&);
 // Writes one owned GPU word using real CP WRITE_DATA, then cache-release fence.
 Status submitWrite(const Io&,State&,uint64_t destinationGpu,uint32_t value,Result&);
 // Single outstanding submission. Errors fault and retain; observation may be
 // retried to retire a pending command, but never reopens a faulted queue.
 Status waitFence(const Io&,State&,const PollOptions&,Result&);
+// Observe the CURRENT final fence/RPTR, exact ring bindings, exclusive legacy
+// producer controls and bounded CP idle. Performs no submission or halt. The
+// native owner must also prove immutable per-VM sole-producer provenance; this
+// observation alone never authorizes freeing a VM. Accepts Running or Stopped,
+// never Faulted/pending. Rechecks DMA writeback after the hardware idle check.
+Status checkIdleCompletion(const Io&,State&,const PollOptions&,Result&);
 // Drain, halt ME/PFP, wait CP idle, deactivate RB0 and disable its doorbell.
 // This retires queue buffers only; RLC CSB/TMR/firmware remain independently live.
 Status stop(const Io&,State&,const PollOptions&,Result&);

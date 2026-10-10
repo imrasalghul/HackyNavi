@@ -7,6 +7,11 @@
 // Kernel-backed SDMA6 queue0. The ring, pointers, fence and copy payloads are
 // actual prepared DMA allocations mapped by the retained GART controller.
 // No simulated backend or CPU copy fallback is selected by this class.
+// Hardware/allocation/submission entry points require the caller's live
+// HackyNaviGARTController::Access, installed before descendant locks. Normal
+// work requires Operation authority; cleanup accepts RetirementScope. Only
+// CPU-only unpublished release is permitted without live hardware authority.
+
 class HackyNaviSDMAQueue : public OSObject {
     OSDeclareDefaultStructors(HackyNaviSDMAQueue)
 public:

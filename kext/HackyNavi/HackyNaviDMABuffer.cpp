@@ -61,7 +61,7 @@ HackyNaviDMABuffer::HackyNaviDMABuffer()
     : device_(nullptr), openOwner_(nullptr), mapper_(nullptr), memory_(nullptr),
       command_(nullptr), segments_(nullptr), cpuAddress_(nullptr), bytes_(0),
       segmentCapacity_(0), segmentCount_(0), mappingKind_(MappingKind::Unallocated),
-      memoryPrepared_(false), ready_(false) {}
+      memoryPrepared_(false), ready_(false), teardownFailure_(kIOReturnSuccess) {}
 
 HackyNaviDMABuffer::~HackyNaviDMABuffer() { (void)reset(); }
 
@@ -95,6 +95,7 @@ IOReturn HackyNaviDMABuffer::selectMapper() {
 
 IOReturn HackyNaviDMABuffer::allocate(IOPCIDevice* device, IOService* openOwner,
                                     const Options& options) {
+    if (teardownFailure_ != kIOReturnSuccess) return teardownFailure_;
     if (device_ || memory_ || command_ || ready_) return kIOReturnBusy;
     if (!device || !openOwner || options.bytes < kPageBytes || options.bytes > kMaxBytes ||
         (options.bytes & (kPageBytes - 1)) || !powerOfTwo(options.alignment) ||
@@ -247,7 +248,9 @@ IOReturn HackyNaviDMABuffer::reset() {
     bytes_ = 0;
     segmentCapacity_ = 0;
     mappingKind_ = MappingKind::Unallocated;
-    if (result != kIOReturnSuccess)
+    if (result != kIOReturnSuccess && teardownFailure_ == kIOReturnSuccess) {
+        teardownFailure_ = result;
         IOLog("HackyNaviDMABuffer: DMA teardown failed (0x%x); device must remain quiesced\n", result);
-    return result;
+    }
+    return teardownFailure_;
 }

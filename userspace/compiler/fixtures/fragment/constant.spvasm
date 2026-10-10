@@ -1,0 +1,20 @@
+; Authored real fragment shader, assembled and validated with SPIRV-Tools.
+; SPDX-License-Identifier: MIT
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %color
+OpExecutionMode %main OriginUpperLeft
+OpDecorate %color Location 0
+%void = OpTypeVoid
+%function = OpTypeFunction %void
+%float = OpTypeFloat 32
+%rgba = OpTypeVector %float 4
+%output = OpTypePointer Output %rgba
+%color = OpVariable %output Output
+%one = OpConstant %float 1
+%white = OpConstantComposite %rgba %one %one %one %one
+%main = OpFunction %void None %function
+%label = OpLabel
+OpStore %color %white
+OpReturn
+OpFunctionEnd

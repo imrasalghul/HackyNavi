@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "HackyNaviSDMAQueue.hpp"
+#include "HackyNaviPciAccess.hpp"
 #include <IOKit/IOLib.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <libkern/OSAtomic.h>
@@ -42,6 +43,7 @@ HackyNaviSDMAQueue* HackyNaviSDMAQueue::withController(
 }
 IOReturn HackyNaviSDMAQueue::initialize(HackyNaviGARTController* gart, uint32_t engine) {
     if (!gart || engine > 1) return kIOReturnBadArgument;
+    if (!gart->normalAccessReady()) return kIOReturnOffline;
     gart_ = gart; gart_->retain();
     IOReturn result = gart_->acquireQueueStorage(this);
     if (result != kIOReturnSuccess) return result;
@@ -71,25 +73,16 @@ IOReturn HackyNaviSDMAQueue::initialize(HackyNaviGARTController* gart, uint32_t 
     memory_.wptr = reinterpret_cast<volatile uint64_t*>(wbCpu + 8);
     memory_.fence = reinterpret_cast<volatile uint32_t*>(wbCpu + 16);
     state_ = State::Prepared;
-    return kIOReturnSuccess;
+    return gart_->normalAccessReady()?kIOReturnSuccess:kIOReturnOffline;
 }
 bool HackyNaviSDMAQueue::providerReady() const {
-    if (!gart_ || !storageLease_ || gart_->state_ != HackyNaviGARTController::State::BothEnabled ||
-        !gart_->device_ || !gart_->openOwner_ || gart_->device_->isInactive() ||
-        !gart_->device_->isOpen(gart_->openOwner_) ||
-        gart_->device_->configRead32(0) != 0x744c1002) return false;
-    const UInt16 command = gart_->device_->configRead16(kIOPCIConfigCommand);
-    if (command == 0xffff || (command & 6) != 6) return false;
-    UInt8 pm = 0;
-    if (gart_->device_->findPCICapability(1, &pm)) {
-        if (pm < 0x40 || pm > 0xf8 || (pm & 3)) return false;
-        const UInt16 power = gart_->device_->configRead16(pm + 4);
-        if (power == 0xffff || (power & 3)) return false;
-    }
-    return true;
+    if (!gart_ || !gart_->accessReady() || !storageLease_ || gart_->state_ != HackyNaviGARTController::State::BothEnabled ||
+        !gart_->device_ || !gart_->openOwner_) return false;
+    return hackynavi::nativepci::ready(gart_->device_, gart_->openOwner_,
+        hackynavi::nativepci::BusMaster::Enabled) && gart_->accessReady();
 }
 bool HackyNaviSDMAQueue::accessAllowed(uint32_t offset) const {
-    return mmioActive_ && gart_ && storageLease_ && gart_->registers_ &&
+    return mmioActive_ && gart_ && gart_->accessReady() && storageLease_ && gart_->registers_ &&
         !gart_->device_->isInactive() && gart_->device_->isOpen(gart_->openOwner_) &&
         !(offset & 3) && gart_->registerBytes_ >= 4 && offset <= gart_->registerBytes_ - 4;
 }
@@ -100,7 +93,7 @@ bool HackyNaviSDMAQueue::read32(void* context, uint32_t offset, uint32_t& value)
     value = self->gart_->registers_[offset / 4];
     OSSynchronizeIO();
     __asm__ __volatile__("" ::: "memory");
-    return true;
+    return self->gart_->accessReady();
 }
 bool HackyNaviSDMAQueue::write32(void* context, uint32_t offset, uint32_t value) {
     auto* self = static_cast<HackyNaviSDMAQueue*>(context);
@@ -109,7 +102,7 @@ bool HackyNaviSDMAQueue::write32(void* context, uint32_t offset, uint32_t value)
     self->gart_->registers_[offset / 4] = value;
     OSSynchronizeIO();
     __asm__ __volatile__("" ::: "memory");
-    return true;
+    return self->gart_->accessReady();
 }
 bool HackyNaviSDMAQueue::publish(void* context) {
     auto* self = static_cast<HackyNaviSDMAQueue*>(context);
@@ -139,6 +132,7 @@ IOReturn HackyNaviSDMAQueue::faultLocked() {
     return kIOReturnIOError;
 }
 IOReturn HackyNaviSDMAQueue::start() {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     IOLockLock(lock_);
     if (state_ != State::Prepared) return endOperation(kIOReturnNotReady);
     if (!providerReady()) return endOperation(kIOReturnOffline);
@@ -164,6 +158,7 @@ bool HackyNaviSDMAQueue::dataRange(uint64_t offset, uint32_t bytes) const {
 }
 IOReturn HackyNaviSDMAQueue::copyLocked(uint64_t source, uint64_t destination, uint32_t bytes,
                                        const sq::PollOptions& poll) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     if (state_ != State::Running) return kIOReturnNotReady;
     if (!validPoll(poll) || !dataRange(source, bytes) || !dataRange(destination, bytes) ||
         (source < destination + bytes && destination < source + bytes)) return kIOReturnBadArgument;
@@ -180,6 +175,7 @@ IOReturn HackyNaviSDMAQueue::copyData(uint64_t source, uint64_t destination,
 }
 IOReturn HackyNaviSDMAQueue::fillData(uint64_t destination, uint32_t value,
                                     uint32_t bytes, const sq::PollOptions& poll) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     IOLockLock(lock_);
     if (state_ != State::Running) return endOperation(kIOReturnNotReady);
     if (!validPoll(poll) || !dataRange(destination, bytes) || ((destination | bytes) & 3))
@@ -191,9 +187,11 @@ IOReturn HackyNaviSDMAQueue::fillData(uint64_t destination, uint32_t value,
     return endOperation(kIOReturnSuccess);
 }
 IOReturn HackyNaviSDMAQueue::runCopyTest(const sq::PollOptions& poll, CopyTestResult& out) {
+    if (!gart_ || !gart_->normalAccessReady()) return kIOReturnOffline;
     out = CopyTestResult{};
     out.firstMismatch = UINT32_MAX;
     IOLockLock(lock_);
+    if (!gart_->normalAccessReady()) return endOperation(kIOReturnOffline);
     if (!validPoll(poll)) return endOperation(kIOReturnBadArgument);
     if (state_ != State::Running || !dataRange(kRingBytes, 2 * kTestBytes))
         return endOperation(kIOReturnNotReady);
@@ -245,6 +243,7 @@ IOReturn HackyNaviSDMAQueue::stop(const sq::PollOptions& poll) {
 }
 IOReturn HackyNaviSDMAQueue::releaseAfterDeviceReset() {
     IOLockLock(lock_);
+    if (hardwareHold_ && !gart_->accessReady()) return endOperation(kIOReturnOffline);
     const IOReturn result = storageLease_ ? gart_->releaseQueueStorage(this) : kIOReturnSuccess;
     if (result != kIOReturnSuccess) return endOperation(result);
     queue_.clearAfterVerifiedReset();

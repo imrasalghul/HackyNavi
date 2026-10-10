@@ -1,0 +1,2307 @@
+{
+  "schema": 1,
+  "target": "gfx1100",
+  "mesa_commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+  "hardware_executed": false,
+  "native_admission": false,
+  "default_policy": "reject unknown/ambiguous/unimplemented encoding",
+  "claim": "Source-derived structural research rows only; not a provenance, initialization, memory-ordering, termination or ownership proof.",
+  "source_sha256_lf": {
+    "aco_opcodes.py": "18556f741f8818bae953eff4bb602bff5f57aceb98ac918eb13d817ac3294e3e",
+    "aco_assembler.cpp": "1a5cdbb01a6f850aed1cd5196c23340c8dc01ddb6954e6bcb29e5eaa36bd8935",
+    "aco_opcodes_cpp.py": "dde16a9fbb0ab780f24ac4ab75504412249e4fa526b7d9f2ef4e8a0f61d57c16",
+    "aco_ir.h": "8cf0be514b44957a1c3890b21a5b99e59fc2a5800f8d225a2f9fc33fcc67d40d",
+    "aco_ir.cpp": "dca95f27e90bce78dd6ee8f104bbb0fde5590165b245ae3b371109b9760163cb"
+  },
+  "corpus_sha256": "3512bfe85ec0e3e7f998bb9b434686c63037d5d22a2056def08c7abd54e3c64a",
+  "formats": {
+    "SOP1": {
+      "mask": 4286578688,
+      "value": 3196059648,
+      "shift": 8,
+      "bits": 8,
+      "words": 1,
+      "source": "aco_assembler.cpp:197-207",
+      "fields": [
+        {
+          "name": "sdst",
+          "word": 0,
+          "low": 16,
+          "bits": 7,
+          "role": "sgpr32_destination",
+          "scale": 1
+        },
+        {
+          "name": "src0",
+          "word": 0,
+          "low": 0,
+          "bits": 8,
+          "role": "scalar_source_selector",
+          "scale": 1
+        }
+      ]
+    },
+    "SOP2": {
+      "mask": 3221225472,
+      "value": 2147483648,
+      "shift": 23,
+      "bits": 7,
+      "words": 1,
+      "source": "aco_assembler.cpp:151-161",
+      "fields": [
+        {
+          "name": "sdst",
+          "word": 0,
+          "low": 16,
+          "bits": 7,
+          "role": "sgpr32_destination",
+          "scale": 1
+        },
+        {
+          "name": "src0",
+          "word": 0,
+          "low": 0,
+          "bits": 8,
+          "role": "scalar_source_selector",
+          "scale": 1
+        },
+        {
+          "name": "src1",
+          "word": 0,
+          "low": 8,
+          "bits": 8,
+          "role": "scalar_source_selector",
+          "scale": 1
+        }
+      ]
+    },
+    "SOPP": {
+      "mask": 4286578688,
+      "value": 3212836864,
+      "shift": 16,
+      "bits": 7,
+      "words": 1,
+      "source": "aco_assembler.cpp:221-237",
+      "fields": [
+        {
+          "name": "simm16",
+          "word": 0,
+          "low": 0,
+          "bits": 16,
+          "role": "opcode_specific_immediate",
+          "scale": 1
+        }
+      ]
+    },
+    "SMEM": {
+      "mask": 4227858432,
+      "value": 4093640704,
+      "shift": 18,
+      "bits": 8,
+      "words": 2,
+      "source": "aco_assembler.cpp:240-343; aco_ir.cpp:145-149; aco_ir.h:1570-1578",
+      "fields": [
+        {
+          "name": "sbase",
+          "word": 0,
+          "low": 0,
+          "bits": 6,
+          "role": "sgpr64_base",
+          "scale": 2
+        },
+        {
+          "name": "sdata",
+          "word": 0,
+          "low": 6,
+          "bits": 7,
+          "role": "sgpr_load_destination",
+          "scale": 1
+        },
+        {
+          "name": "dlc",
+          "word": 0,
+          "low": 13,
+          "bits": 1,
+          "role": "cache_flag",
+          "scale": 1
+        },
+        {
+          "name": "glc",
+          "word": 0,
+          "low": 14,
+          "bits": 1,
+          "role": "cache_flag",
+          "scale": 1
+        },
+        {
+          "name": "offset",
+          "word": 1,
+          "low": 0,
+          "bits": 20,
+          "role": "nonnegative_byte_offset_subset",
+          "scale": 1
+        },
+        {
+          "name": "soffset",
+          "word": 1,
+          "low": 25,
+          "bits": 7,
+          "role": "sgpr32_offset_or_gfx11_null",
+          "scale": 1
+        }
+      ]
+    },
+    "MUBUF": {
+      "mask": 4227858432,
+      "value": 3758096384,
+      "shift": 18,
+      "bits": 8,
+      "words": 2,
+      "source": "aco_assembler.cpp:554-603",
+      "fields": [
+        {
+          "name": "offset",
+          "word": 0,
+          "low": 0,
+          "bits": 12,
+          "role": "byte_offset",
+          "scale": 1
+        },
+        {
+          "name": "slc",
+          "word": 0,
+          "low": 12,
+          "bits": 1,
+          "role": "cache_flag",
+          "scale": 1
+        },
+        {
+          "name": "dlc",
+          "word": 0,
+          "low": 13,
+          "bits": 1,
+          "role": "cache_flag",
+          "scale": 1
+        },
+        {
+          "name": "glc",
+          "word": 0,
+          "low": 14,
+          "bits": 1,
+          "role": "cache_flag",
+          "scale": 1
+        },
+        {
+          "name": "lds",
+          "word": 0,
+          "low": 16,
+          "bits": 1,
+          "role": "lds_destination",
+          "scale": 1
+        },
+        {
+          "name": "vaddr",
+          "word": 1,
+          "low": 0,
+          "bits": 8,
+          "role": "vgpr32_address",
+          "scale": 1
+        },
+        {
+          "name": "vdata",
+          "word": 1,
+          "low": 8,
+          "bits": 8,
+          "role": "vgpr32_load_destination_or_store_source",
+          "scale": 1
+        },
+        {
+          "name": "srsrc",
+          "word": 1,
+          "low": 16,
+          "bits": 5,
+          "role": "sgpr128_descriptor",
+          "scale": 4
+        },
+        {
+          "name": "tfe",
+          "word": 1,
+          "low": 21,
+          "bits": 1,
+          "role": "texture_fail_enable",
+          "scale": 1
+        },
+        {
+          "name": "offen",
+          "word": 1,
+          "low": 22,
+          "bits": 1,
+          "role": "vector_offset_enable",
+          "scale": 1
+        },
+        {
+          "name": "idxen",
+          "word": 1,
+          "low": 23,
+          "bits": 1,
+          "role": "vector_index_enable",
+          "scale": 1
+        },
+        {
+          "name": "soffset",
+          "word": 1,
+          "low": 24,
+          "bits": 8,
+          "role": "scalar_source_selector",
+          "scale": 1
+        }
+      ]
+    },
+    "VOP3": {
+      "mask": 4227858432,
+      "value": 3556769792,
+      "shift": 16,
+      "bits": 10,
+      "words": 2,
+      "source": "aco_assembler.cpp:1074-1140; integer no-modifier subset only",
+      "fields": [
+        {
+          "name": "vdst",
+          "word": 0,
+          "low": 0,
+          "bits": 8,
+          "role": "vgpr32_destination",
+          "scale": 1
+        },
+        {
+          "name": "src0",
+          "word": 1,
+          "low": 0,
+          "bits": 9,
+          "role": "scalar_or_vector_source_selector",
+          "scale": 1
+        },
+        {
+          "name": "src1",
+          "word": 1,
+          "low": 9,
+          "bits": 9,
+          "role": "scalar_or_vector_source_selector",
+          "scale": 1
+        },
+        {
+          "name": "src2",
+          "word": 1,
+          "low": 18,
+          "bits": 9,
+          "role": "scalar_or_vector_source_selector",
+          "scale": 1
+        }
+      ]
+    },
+    "VOP2": {
+      "mask": 2147483648,
+      "value": 0,
+      "shift": 25,
+      "bits": 6,
+      "words": 1,
+      "source": "aco_assembler.cpp:346-361; integer no-extension subset only",
+      "fields": [
+        {
+          "name": "vdst",
+          "word": 0,
+          "low": 17,
+          "bits": 8,
+          "role": "vgpr32_destination",
+          "scale": 1
+        },
+        {
+          "name": "src0",
+          "word": 0,
+          "low": 0,
+          "bits": 9,
+          "role": "scalar_or_vector_source_selector",
+          "scale": 1
+        },
+        {
+          "name": "vsrc1",
+          "word": 0,
+          "low": 9,
+          "bits": 8,
+          "role": "vgpr32_source",
+          "scale": 1
+        }
+      ]
+    }
+  },
+  "rows": [
+    {
+      "name": "s_mov_b32",
+      "aliases": [],
+      "format": "SOP1",
+      "opcode": 0,
+      "match_mask": 4286643968,
+      "match_value": 3196059648,
+      "instruction_class": "salu",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "s_mul_i32",
+      "aliases": [],
+      "format": "SOP2",
+      "opcode": 44,
+      "match_mask": 4286578688,
+      "match_value": 2516582400,
+      "instruction_class": "salu",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "s_clause",
+      "aliases": [],
+      "format": "SOPP",
+      "opcode": 5,
+      "match_mask": 4294901760,
+      "match_value": 3213164544,
+      "instruction_class": "salu",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "s_waitcnt",
+      "aliases": [],
+      "format": "SOPP",
+      "opcode": 9,
+      "match_mask": 4294901760,
+      "match_value": 3213426688,
+      "instruction_class": "waitcnt",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "s_delay_alu",
+      "aliases": [],
+      "format": "SOPP",
+      "opcode": 7,
+      "match_mask": 4294901760,
+      "match_value": 3213295616,
+      "instruction_class": "waitcnt",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "s_endpgm",
+      "aliases": [],
+      "format": "SOPP",
+      "opcode": 48,
+      "match_mask": 4294901760,
+      "match_value": 3215982592,
+      "instruction_class": "salu",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "s_code_end",
+      "aliases": [],
+      "format": "SOPP",
+      "opcode": 31,
+      "match_mask": 4294901760,
+      "match_value": 3214868480,
+      "instruction_class": "salu",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": true
+    },
+    {
+      "name": "s_load_dword",
+      "aliases": [],
+      "format": "SMEM",
+      "opcode": 0,
+      "match_mask": 4294705152,
+      "match_value": 4093640704,
+      "instruction_class": "smem",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": false,
+      "operand_metadata_note": "Mesa opcode table has no operand types for this format; physical fields/explicit widths below are sourced from assembler/IR, not invented table metadata.",
+      "memory_bytes": 4,
+      "pending_counter": "lgkm"
+    },
+    {
+      "name": "s_load_dwordx4",
+      "aliases": [],
+      "format": "SMEM",
+      "opcode": 2,
+      "match_mask": 4294705152,
+      "match_value": 4094164992,
+      "instruction_class": "smem",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": false,
+      "operand_metadata_note": "Mesa opcode table has no operand types for this format; physical fields/explicit widths below are sourced from assembler/IR, not invented table metadata.",
+      "memory_bytes": 16,
+      "pending_counter": "lgkm"
+    },
+    {
+      "name": "v_lshl_add_u32",
+      "aliases": [],
+      "format": "VOP3",
+      "opcode": 582,
+      "match_mask": 4294901760,
+      "match_value": 3594911744,
+      "instruction_class": "valu32",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "v_add_lshl_u32",
+      "aliases": [],
+      "format": "VOP3",
+      "opcode": 583,
+      "match_mask": 4294901760,
+      "match_value": 3594977280,
+      "instruction_class": "valu32",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "v_add3_u32",
+      "aliases": [],
+      "format": "VOP3",
+      "opcode": 597,
+      "match_mask": 4294901760,
+      "match_value": 3595894784,
+      "instruction_class": "valu32",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "v_mul_lo_u32",
+      "aliases": [
+        "v_mul_lo_i32"
+      ],
+      "format": "VOP3",
+      "opcode": 812,
+      "match_mask": 4294901760,
+      "match_value": 3609985024,
+      "instruction_class": "valu_quarter_rate32",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "v_xad_u32",
+      "aliases": [],
+      "format": "VOP3",
+      "opcode": 581,
+      "match_mask": 4294901760,
+      "match_value": 3594846208,
+      "instruction_class": "valu32",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "v_lshlrev_b32",
+      "aliases": [],
+      "format": "VOP2",
+      "opcode": 24,
+      "match_mask": 4261412864,
+      "match_value": 805306368,
+      "instruction_class": "valu32",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "v_add_u32",
+      "aliases": [],
+      "format": "VOP2",
+      "opcode": 37,
+      "match_mask": 4261412864,
+      "match_value": 1241513984,
+      "instruction_class": "valu32",
+      "atomic": false,
+      "operands": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        },
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "definitions": [
+        {
+          "base": "aco_base_type_uint",
+          "bits": 32,
+          "components": 1,
+          "fixed": "not_fixed",
+          "modifiers": false
+        }
+      ],
+      "operand_metadata_complete": true,
+      "admission": false,
+      "padding_only": false
+    },
+    {
+      "name": "buffer_load_dword",
+      "aliases": [],
+      "format": "MUBUF",
+      "opcode": 20,
+      "match_mask": 4294705152,
+      "match_value": 3763339264,
+      "instruction_class": "vmem",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": false,
+      "operand_metadata_note": "Mesa opcode table has no operand types for this format; physical fields/explicit widths below are sourced from assembler/IR, not invented table metadata.",
+      "memory_bytes": 4,
+      "memory_direction": "read",
+      "pending_counter": "vm"
+    },
+    {
+      "name": "buffer_store_dword",
+      "aliases": [],
+      "format": "MUBUF",
+      "opcode": 26,
+      "match_mask": 4294705152,
+      "match_value": 3764912128,
+      "instruction_class": "vmem",
+      "atomic": false,
+      "operands": [],
+      "definitions": [],
+      "operand_metadata_complete": false,
+      "admission": false,
+      "padding_only": false,
+      "operand_metadata_note": "Mesa opcode table has no operand types for this format; physical fields/explicit widths below are sourced from assembler/IR, not invented table metadata.",
+      "memory_bytes": 4,
+      "memory_direction": "write",
+      "pending_counter": "vs"
+    }
+  ],
+  "explicit_reject_examples": [
+    {
+      "name": "s_setpc_b64",
+      "format": "SOP1",
+      "opcode": 72
+    },
+    {
+      "name": "s_swappc_b64",
+      "format": "SOP1",
+      "opcode": 73
+    },
+    {
+      "name": "s_rfe_b64",
+      "format": "SOP1",
+      "opcode": 74
+    },
+    {
+      "name": "s_sendmsg_rtn_b32",
+      "format": "SOP1",
+      "opcode": 76
+    },
+    {
+      "name": "s_sendmsg_rtn_b64",
+      "format": "SOP1",
+      "opcode": 77
+    },
+    {
+      "name": "s_getreg_b32",
+      "format": "SOPK",
+      "opcode": 17
+    },
+    {
+      "name": "s_setreg_b32",
+      "format": "SOPK",
+      "opcode": 18
+    },
+    {
+      "name": "s_setreg_imm32_b32",
+      "format": "SOPK",
+      "opcode": 19
+    },
+    {
+      "name": "s_trap",
+      "format": "SOPP",
+      "opcode": 16
+    },
+    {
+      "name": "s_sendmsg",
+      "format": "SOPP",
+      "opcode": 54
+    },
+    {
+      "name": "s_sendmsghalt",
+      "format": "SOPP",
+      "opcode": 55
+    },
+    {
+      "name": "s_endpgm_saved",
+      "format": "SOPP",
+      "opcode": 49
+    }
+  ],
+  "products": [
+    {
+      "kernel": "add_one",
+      "local": [
+        64,
+        1,
+        1
+      ],
+      "code_sha256": "ac333acf99387a4063fae75a89dd4e6968907f6b78702d26442dd8a3575f7dda",
+      "code_bytes": 104,
+      "executable_bytes": 84,
+      "instructions": [
+        {
+          "byte_offset": 0,
+          "name": "s_mov_b32",
+          "format": "SOP1",
+          "dwords": 1,
+          "words": [
+            "be850090"
+          ],
+          "fields": {
+            "sdst": 5,
+            "src0": 144
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 4,
+          "name": "s_clause",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf850002"
+          ],
+          "fields": {
+            "simm16": 2
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 8,
+          "name": "s_load_dwordx4",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4080200",
+            "f8000000"
+          ],
+          "fields": {
+            "sbase": 0,
+            "sdata": 8,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 0,
+            "soffset": 124
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 16,
+          "name": "s_load_dwordx4",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4080300",
+            "0a000000"
+          ],
+          "fields": {
+            "sbase": 0,
+            "sdata": 12,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 0,
+            "soffset": 5
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 24,
+          "name": "s_load_dword",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4000181",
+            "f800000c"
+          ],
+          "fields": {
+            "sbase": 2,
+            "sdata": 6,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 12,
+            "soffset": 124
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 32,
+          "name": "v_lshl_add_u32",
+          "format": "VOP3",
+          "dwords": 2,
+          "words": [
+            "d6460000",
+            "04010c04"
+          ],
+          "fields": {
+            "vdst": 0,
+            "src0": 4,
+            "src1": 134,
+            "src2": 256
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 40,
+          "name": "s_waitcnt",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf89fc07"
+          ],
+          "fields": {
+            "simm16": 64519,
+            "vmcnt": 63,
+            "lgkmcnt": 0,
+            "expcnt": 7
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 44,
+          "name": "s_delay_alu",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf870001"
+          ],
+          "fields": {
+            "simm16": 1
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 48,
+          "name": "v_add_lshl_u32",
+          "format": "VOP3",
+          "dwords": 2,
+          "words": [
+            "d6470000",
+            "020a0006"
+          ],
+          "fields": {
+            "vdst": 0,
+            "src0": 6,
+            "src1": 256,
+            "src2": 130
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 56,
+          "name": "buffer_load_dword",
+          "format": "MUBUF",
+          "dwords": 2,
+          "words": [
+            "e0500000",
+            "80420100"
+          ],
+          "fields": {
+            "offset": 0,
+            "slc": 0,
+            "dlc": 0,
+            "glc": 0,
+            "lds": 0,
+            "vaddr": 0,
+            "vdata": 1,
+            "srsrc": 8,
+            "tfe": 0,
+            "offen": 1,
+            "idxen": 0,
+            "soffset": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 64,
+          "name": "s_waitcnt",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf8903f7"
+          ],
+          "fields": {
+            "simm16": 1015,
+            "vmcnt": 0,
+            "lgkmcnt": 63,
+            "expcnt": 7
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 68,
+          "name": "v_add_u32",
+          "format": "VOP2",
+          "dwords": 1,
+          "words": [
+            "4a020281"
+          ],
+          "fields": {
+            "vdst": 1,
+            "src0": 129,
+            "vsrc1": 1
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 72,
+          "name": "buffer_store_dword",
+          "format": "MUBUF",
+          "dwords": 2,
+          "words": [
+            "e0680000",
+            "80430100"
+          ],
+          "fields": {
+            "offset": 0,
+            "slc": 0,
+            "dlc": 0,
+            "glc": 0,
+            "lds": 0,
+            "vaddr": 0,
+            "vdata": 1,
+            "srsrc": 12,
+            "tfe": 0,
+            "offen": 1,
+            "idxen": 0,
+            "soffset": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 80,
+          "name": "s_endpgm",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bfb00000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 84,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 88,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 92,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 96,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 100,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        }
+      ]
+    },
+    {
+      "kernel": "add_one",
+      "local": [
+        3,
+        1,
+        1
+      ],
+      "code_sha256": "98b773c473a79de6d64f7ed6f9e559fd88d5a87058e67dfab484bd1264a5c93f",
+      "code_bytes": 104,
+      "executable_bytes": 84,
+      "instructions": [
+        {
+          "byte_offset": 0,
+          "name": "s_mov_b32",
+          "format": "SOP1",
+          "dwords": 1,
+          "words": [
+            "be850090"
+          ],
+          "fields": {
+            "sdst": 5,
+            "src0": 144
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 4,
+          "name": "s_clause",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf850002"
+          ],
+          "fields": {
+            "simm16": 2
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 8,
+          "name": "s_load_dwordx4",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4080200",
+            "f8000000"
+          ],
+          "fields": {
+            "sbase": 0,
+            "sdata": 8,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 0,
+            "soffset": 124
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 16,
+          "name": "s_load_dwordx4",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4080300",
+            "0a000000"
+          ],
+          "fields": {
+            "sbase": 0,
+            "sdata": 12,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 0,
+            "soffset": 5
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 24,
+          "name": "s_load_dword",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4000181",
+            "f800000c"
+          ],
+          "fields": {
+            "sbase": 2,
+            "sdata": 6,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 12,
+            "soffset": 124
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 32,
+          "name": "s_mul_i32",
+          "format": "SOP2",
+          "dwords": 1,
+          "words": [
+            "96048304"
+          ],
+          "fields": {
+            "sdst": 4,
+            "src0": 4,
+            "src1": 131
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 36,
+          "name": "s_waitcnt",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf89fc07"
+          ],
+          "fields": {
+            "simm16": 64519,
+            "vmcnt": 63,
+            "lgkmcnt": 0,
+            "expcnt": 7
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 40,
+          "name": "s_delay_alu",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf870099"
+          ],
+          "fields": {
+            "simm16": 153
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 44,
+          "name": "v_add3_u32",
+          "format": "VOP3",
+          "dwords": 2,
+          "words": [
+            "d6550000",
+            "04000806"
+          ],
+          "fields": {
+            "vdst": 0,
+            "src0": 6,
+            "src1": 4,
+            "src2": 256
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 52,
+          "name": "v_lshlrev_b32",
+          "format": "VOP2",
+          "dwords": 1,
+          "words": [
+            "30000082"
+          ],
+          "fields": {
+            "vdst": 0,
+            "src0": 130,
+            "vsrc1": 0
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 56,
+          "name": "buffer_load_dword",
+          "format": "MUBUF",
+          "dwords": 2,
+          "words": [
+            "e0500000",
+            "80420100"
+          ],
+          "fields": {
+            "offset": 0,
+            "slc": 0,
+            "dlc": 0,
+            "glc": 0,
+            "lds": 0,
+            "vaddr": 0,
+            "vdata": 1,
+            "srsrc": 8,
+            "tfe": 0,
+            "offen": 1,
+            "idxen": 0,
+            "soffset": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 64,
+          "name": "s_waitcnt",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf8903f7"
+          ],
+          "fields": {
+            "simm16": 1015,
+            "vmcnt": 0,
+            "lgkmcnt": 63,
+            "expcnt": 7
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 68,
+          "name": "v_add_u32",
+          "format": "VOP2",
+          "dwords": 1,
+          "words": [
+            "4a020281"
+          ],
+          "fields": {
+            "vdst": 1,
+            "src0": 129,
+            "vsrc1": 1
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 72,
+          "name": "buffer_store_dword",
+          "format": "MUBUF",
+          "dwords": 2,
+          "words": [
+            "e0680000",
+            "80430100"
+          ],
+          "fields": {
+            "offset": 0,
+            "slc": 0,
+            "dlc": 0,
+            "glc": 0,
+            "lds": 0,
+            "vaddr": 0,
+            "vdata": 1,
+            "srsrc": 12,
+            "tfe": 0,
+            "offen": 1,
+            "idxen": 0,
+            "soffset": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 80,
+          "name": "s_endpgm",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bfb00000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 84,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 88,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 92,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 96,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 100,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        }
+      ]
+    },
+    {
+      "kernel": "affine_xor",
+      "local": [
+        64,
+        1,
+        1
+      ],
+      "code_sha256": "66bc66e2cb814db18d426cc38eb52bc4c843b3a1619952de20945d9a018ce0f4",
+      "code_bytes": 124,
+      "executable_bytes": 104,
+      "instructions": [
+        {
+          "byte_offset": 0,
+          "name": "s_mov_b32",
+          "format": "SOP1",
+          "dwords": 1,
+          "words": [
+            "be850090"
+          ],
+          "fields": {
+            "sdst": 5,
+            "src0": 144
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 4,
+          "name": "s_clause",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf850002"
+          ],
+          "fields": {
+            "simm16": 2
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 8,
+          "name": "s_load_dwordx4",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4080200",
+            "f8000000"
+          ],
+          "fields": {
+            "sbase": 0,
+            "sdata": 8,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 0,
+            "soffset": 124
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 16,
+          "name": "s_load_dwordx4",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4080300",
+            "0a000000"
+          ],
+          "fields": {
+            "sbase": 0,
+            "sdata": 12,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 0,
+            "soffset": 5
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 24,
+          "name": "s_load_dword",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4000181",
+            "f800000c"
+          ],
+          "fields": {
+            "sbase": 2,
+            "sdata": 6,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 12,
+            "soffset": 124
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 32,
+          "name": "v_lshl_add_u32",
+          "format": "VOP3",
+          "dwords": 2,
+          "words": [
+            "d6460000",
+            "04010c04"
+          ],
+          "fields": {
+            "vdst": 0,
+            "src0": 4,
+            "src1": 134,
+            "src2": 256
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 40,
+          "name": "s_waitcnt",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf89fc07"
+          ],
+          "fields": {
+            "simm16": 64519,
+            "vmcnt": 63,
+            "lgkmcnt": 0,
+            "expcnt": 7
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 44,
+          "name": "s_delay_alu",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf870091"
+          ],
+          "fields": {
+            "simm16": 145
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 48,
+          "name": "v_add_u32",
+          "format": "VOP2",
+          "dwords": 1,
+          "words": [
+            "4a000006"
+          ],
+          "fields": {
+            "vdst": 0,
+            "src0": 6,
+            "vsrc1": 0
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 52,
+          "name": "v_lshlrev_b32",
+          "format": "VOP2",
+          "dwords": 1,
+          "words": [
+            "30020082"
+          ],
+          "fields": {
+            "vdst": 1,
+            "src0": 130,
+            "vsrc1": 0
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 56,
+          "name": "buffer_load_dword",
+          "format": "MUBUF",
+          "dwords": 2,
+          "words": [
+            "e0500000",
+            "80420201"
+          ],
+          "fields": {
+            "offset": 0,
+            "slc": 0,
+            "dlc": 0,
+            "glc": 0,
+            "lds": 0,
+            "vaddr": 1,
+            "vdata": 2,
+            "srsrc": 8,
+            "tfe": 0,
+            "offen": 1,
+            "idxen": 0,
+            "soffset": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 64,
+          "name": "s_waitcnt",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf8903f7"
+          ],
+          "fields": {
+            "simm16": 1015,
+            "vmcnt": 0,
+            "lgkmcnt": 63,
+            "expcnt": 7
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 68,
+          "name": "v_mul_lo_u32",
+          "format": "VOP3",
+          "dwords": 2,
+          "words": [
+            "d72c0002",
+            "02020487"
+          ],
+          "fields": {
+            "vdst": 2,
+            "src0": 135,
+            "src1": 258,
+            "src2": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 76,
+          "name": "s_delay_alu",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf870001"
+          ],
+          "fields": {
+            "simm16": 1
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 80,
+          "name": "v_xad_u32",
+          "format": "VOP3",
+          "dwords": 3,
+          "words": [
+            "d6450002",
+            "040204ff",
+            "5a5a5a5a"
+          ],
+          "fields": {
+            "vdst": 2,
+            "src0": 255,
+            "src1": 258,
+            "src2": 256,
+            "literal32": 1515870810
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 92,
+          "name": "buffer_store_dword",
+          "format": "MUBUF",
+          "dwords": 2,
+          "words": [
+            "e0680000",
+            "80430201"
+          ],
+          "fields": {
+            "offset": 0,
+            "slc": 0,
+            "dlc": 0,
+            "glc": 0,
+            "lds": 0,
+            "vaddr": 1,
+            "vdata": 2,
+            "srsrc": 12,
+            "tfe": 0,
+            "offen": 1,
+            "idxen": 0,
+            "soffset": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 100,
+          "name": "s_endpgm",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bfb00000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 104,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 108,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 112,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 116,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 120,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        }
+      ]
+    },
+    {
+      "kernel": "affine_xor",
+      "local": [
+        3,
+        1,
+        1
+      ],
+      "code_sha256": "0a9ad10b394dce951c53a04726ff40a2f24dee3574758a905382ed7f79b0a723",
+      "code_bytes": 124,
+      "executable_bytes": 104,
+      "instructions": [
+        {
+          "byte_offset": 0,
+          "name": "s_mov_b32",
+          "format": "SOP1",
+          "dwords": 1,
+          "words": [
+            "be850090"
+          ],
+          "fields": {
+            "sdst": 5,
+            "src0": 144
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 4,
+          "name": "s_clause",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf850002"
+          ],
+          "fields": {
+            "simm16": 2
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 8,
+          "name": "s_load_dwordx4",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4080200",
+            "f8000000"
+          ],
+          "fields": {
+            "sbase": 0,
+            "sdata": 8,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 0,
+            "soffset": 124
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 16,
+          "name": "s_load_dwordx4",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4080300",
+            "0a000000"
+          ],
+          "fields": {
+            "sbase": 0,
+            "sdata": 12,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 0,
+            "soffset": 5
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 24,
+          "name": "s_load_dword",
+          "format": "SMEM",
+          "dwords": 2,
+          "words": [
+            "f4000181",
+            "f800000c"
+          ],
+          "fields": {
+            "sbase": 2,
+            "sdata": 6,
+            "dlc": 0,
+            "glc": 0,
+            "offset": 12,
+            "soffset": 124
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 32,
+          "name": "s_mul_i32",
+          "format": "SOP2",
+          "dwords": 1,
+          "words": [
+            "96048304"
+          ],
+          "fields": {
+            "sdst": 4,
+            "src0": 4,
+            "src1": 131
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 36,
+          "name": "s_waitcnt",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf89fc07"
+          ],
+          "fields": {
+            "simm16": 64519,
+            "vmcnt": 63,
+            "lgkmcnt": 0,
+            "expcnt": 7
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 40,
+          "name": "s_delay_alu",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf870099"
+          ],
+          "fields": {
+            "simm16": 153
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 44,
+          "name": "v_add3_u32",
+          "format": "VOP3",
+          "dwords": 2,
+          "words": [
+            "d6550000",
+            "04000806"
+          ],
+          "fields": {
+            "vdst": 0,
+            "src0": 6,
+            "src1": 4,
+            "src2": 256
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 52,
+          "name": "v_lshlrev_b32",
+          "format": "VOP2",
+          "dwords": 1,
+          "words": [
+            "30020082"
+          ],
+          "fields": {
+            "vdst": 1,
+            "src0": 130,
+            "vsrc1": 0
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 56,
+          "name": "buffer_load_dword",
+          "format": "MUBUF",
+          "dwords": 2,
+          "words": [
+            "e0500000",
+            "80420201"
+          ],
+          "fields": {
+            "offset": 0,
+            "slc": 0,
+            "dlc": 0,
+            "glc": 0,
+            "lds": 0,
+            "vaddr": 1,
+            "vdata": 2,
+            "srsrc": 8,
+            "tfe": 0,
+            "offen": 1,
+            "idxen": 0,
+            "soffset": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 64,
+          "name": "s_waitcnt",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf8903f7"
+          ],
+          "fields": {
+            "simm16": 1015,
+            "vmcnt": 0,
+            "lgkmcnt": 63,
+            "expcnt": 7
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 68,
+          "name": "v_mul_lo_u32",
+          "format": "VOP3",
+          "dwords": 2,
+          "words": [
+            "d72c0002",
+            "02020487"
+          ],
+          "fields": {
+            "vdst": 2,
+            "src0": 135,
+            "src1": 258,
+            "src2": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 76,
+          "name": "s_delay_alu",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf870001"
+          ],
+          "fields": {
+            "simm16": 1
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 80,
+          "name": "v_xad_u32",
+          "format": "VOP3",
+          "dwords": 3,
+          "words": [
+            "d6450002",
+            "040204ff",
+            "5a5a5a5a"
+          ],
+          "fields": {
+            "vdst": 2,
+            "src0": 255,
+            "src1": 258,
+            "src2": 256,
+            "literal32": 1515870810
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 92,
+          "name": "buffer_store_dword",
+          "format": "MUBUF",
+          "dwords": 2,
+          "words": [
+            "e0680000",
+            "80430201"
+          ],
+          "fields": {
+            "offset": 0,
+            "slc": 0,
+            "dlc": 0,
+            "glc": 0,
+            "lds": 0,
+            "vaddr": 1,
+            "vdata": 2,
+            "srsrc": 12,
+            "tfe": 0,
+            "offen": 1,
+            "idxen": 0,
+            "soffset": 128
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 100,
+          "name": "s_endpgm",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bfb00000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": false
+        },
+        {
+          "byte_offset": 104,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 108,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 112,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 116,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        },
+        {
+          "byte_offset": 120,
+          "name": "s_code_end",
+          "format": "SOPP",
+          "dwords": 1,
+          "words": [
+            "bf9f0000"
+          ],
+          "fields": {
+            "simm16": 0
+          },
+          "padding": true
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "No independent LLVM disassembler result: available Windows LLVM20 has no AMDGPU target.",
+    "Only the recorded integer/no-modifier forms and nonnegative20-bit SMEM offset subset are inspected.",
+    "SMEM/MUBUF opcode metadata lacks operand types; separate physical-field widths are supplied explicitly.",
+    "The caller-provided executable length is checked structurally here; it is not native authority.",
+    "No generated row or successful structural decode authorizes shader execution."
+  ]
+}

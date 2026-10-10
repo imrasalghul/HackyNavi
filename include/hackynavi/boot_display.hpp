@@ -53,11 +53,32 @@ struct Plane {
     // This is an exclusion interval, never an ownership/free-space claim.
     VramRange reservation;
 };
+struct PowerProbe {
+    uint8_t pipe; // 0xff until a power probe begins.
+    // A bit means that read's callback succeeded, including an all-ones value.
+    // It does not mean the value passed power-state validation. No missing
+    // read can be inferred from the zero-initialized corresponding field.
+    uint8_t readsSucceededMask; // bit0=statusBefore, bit1=config, bit2=statusAfter.
+    uint32_t statusBefore, config, statusAfter;
+};
+struct PowerInventory {
+    PowerProbe probes[kPipeCount]; // Unstarted probes have pipe0xff/mask0.
+    uint8_t failedPipe; // 0xff on success or preflight failure.
+    uint32_t readsAttempted, lastRegister, lastValue;
+    bool lastReadSucceeded; // Includes all-ones; no power-state interpretation.
+};
 struct Capture {
     bool complete; // true only on Ok; every one of the4 HUBPs was classified.
+    // Both register passes completed and matched, even if later plane decoding
+    // rejected the format. No authority/ownership claim. Powered-off pipes'
+    // HUBP windows were skipped and their zero storage is not an observation.
+    bool snapshotReadComplete;
     uint8_t failedPipe; // 0xff for a global/preflight failure.
     uint8_t poweredOffMask; // Valid only on Ok; caller must keep these pipes OFF.
     uint32_t readsAttempted, lastRegister;
+    uint32_t lastValue; // Last callback's value, zero if that callback failed.
+    bool lastReadSucceeded; // Includes all-ones; not a usable-device claim.
+    PowerProbe lastPowerProbe; // Raw last probe, retained even on validation failure.
     size_t planeCount;
     Plane planes[kPipeCount];
     Snapshot snapshot; // Diagnostic first pass; may be partial on error.
@@ -72,12 +93,25 @@ struct Capture {
 Status buildLayout(const uint8_t* discovery, size_t bytes, uint64_t barBytes,
                    Layout& out);
 
+// Independent diagnostic inventory of always-on DOMAIN0..3 power controls.
+// At most12 ordered reads: STATUS/CONFIG/STATUS for each pipe. Ok means only
+// that every callback succeeded without all-ones; arbitrary/changed values
+// remain raw evidence, not proof of a readable HUBP or any reservation. Stops
+// globally on transport failure/all-ones and preserves per-read validity.
+// No SOS/VGA/HUBP/global-window access and no register writes. Caller excludes
+// reset/removal/PCI power changes and supplies readable always-on controls.
+// Input/output/callback state must not overlap or change during this call.
+Status inventoryPower(const Layout&, const Io&, PowerInventory& out);
+
 // Read-only, allocation-free, bounded to798 reads (two fixed passes plus power
 // checks). Caller guarantees powered/readable DCN always-on power controls, a
 // stable initialized memory layout, bare-metal Navi31, and excludes device
 // reset/power/removal for safe MMIO. A PGFSM/current+desired power-state check
 // precedes EVERY HUBP-window read, with whole-device checks bracketing each
-// pass and postchecks per pipe. Non-on, transitional or unknown status aborts
+// pass and postchecks per pipe. Current PGFSM0 permits desired0 or desired1
+// with CONFIG0/1 (GATE0 and either FORCEON value), matching Linux's current
+// PGFSM power-on test. Raw status and CONFIG remain exact across guards and
+// both passes. Non-on or unresolved status aborts
 // before the corresponding window read; no power gate is changed. Observing
 // OFF does not prove outstanding hubbub requests drained, so it also returns
 // incomplete. Status samples do not lock hardware against a later power change.
@@ -90,12 +124,19 @@ Status buildLayout(const uint8_t* discovery, size_t bytes, uint64_t barBytes,
 // Input, output and callback state must not overlap or change during capture.
 //
 // Supports only linear, unrotated packed RGB with no alpha plane/DCC/TMZ,
-// VMID0 and the verified MC framebuffer/system-aperture policy. Primary,
-// current and earliest-in-use addresses must agree, with no pending/locked or
-// stereo/GSL/triple-buffer flip. Inactive DCC metadata-layout flags are allowed;
-// data swizzle/dimension/reserved bits remain checked. VGA, cursor and
+// VMID0 and the Linux-programmed TLB0x19 MC framebuffer/system-aperture policy.
+// Firmware TLB0 remains unsupported until its address domain is established.
+// FB registers must exactly match the memory layout; an AGP window must be
+// disabled or wholly disjoint from FB. Primary and earliest-in-use addresses
+// must agree, with no pending/locked or stereo/GSL/triple-buffer flip. Ordinary
+// INUSE is additionally compared only in NO_LATCH mode; its raw value must
+// still be stable across passes. Fixed pending timing fields, 1D/2D linear
+// dimensions and inactive DCC metadata-layout flags are allowed; 3D/reserved
+// dimensions and all data swizzle/reserved bits are rejected. VGA, cursor and
 // dynamic-metadata fetches are rejected. A blank
 // HUBP is skipped only when no outstanding request is reported in both passes.
+// IN_BLANK, VTG selection, TTU_DISABLE or zero dimensions alone do not establish
+// that a powered, unblanked HUBP cannot fetch later; such pipes are not skipped.
 // Unknown formats/modes or incomplete evidence return failure and no intervals.
 //
 // The reservation covers the current linear scanout footprint; it does not
@@ -106,7 +147,7 @@ Status buildLayout(const uint8_t* discovery, size_t bytes, uint64_t barBytes,
 Status capture(const Layout&, const MemoryLayout&, const Io&, Capture& out);
 // Firmware first-attach variant. Requires exact MP0 discovery and actual zero
 // SOS before/between/after passes; the separate BIOS-post check remains required.
-// Completed OFF (PGFSM2, desired OFF, CONFIG gate1/forceon0) skips the entire
+// Completed OFF (PGFSM2, either desired bit, CONFIG gate1/forceon0) skips the entire
 // gated HUBP/cursor/DMDATA window. Both passes and final power checks must agree.
 // Linux DCN3.2 waits for this PGFSM encoding to complete power-off; this cold
 // policy is not a drain proof for an earlier driver's outstanding requests.

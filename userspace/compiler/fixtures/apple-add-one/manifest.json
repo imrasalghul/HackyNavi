@@ -1,0 +1,362 @@
+{
+  "schema_version": 1,
+  "product_class": "AppleAddOneGfx1100V1",
+  "hardware_executed": false,
+  "scope": "Exact pre-existing offline compiler output only. No GPU command submitted and no MTLDevice registration established.",
+  "original_product_directory": "build/gfx11-compiler/apple-add-one-20261010-195643",
+  "source_chain": [
+    "source/add_one.metal",
+    "source/apple/add_one.air",
+    "translated/shader.spv",
+    "shader.bin"
+  ],
+  "mesa": {
+    "repository": "https://gitlab.freedesktop.org/mesa/mesa.git",
+    "commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+    "source_manifest": "provenance/compiler-source-manifest.json",
+    "source_manifest_sha256": "f5b423665e8f2f94cc4d6137d392634135908e8b0aaad3c9c6d5f6c974f73152"
+  },
+  "translator": {
+    "origin_repository": "https://github.com/steelbrain/metal2vulkan",
+    "retrieved_from": "https://github.com/nullmoth/nvidia-macos-driver",
+    "retrieved_revision": "508f3d2496e78a9640d59128a56ddb5a53061606",
+    "subtree": "translator/translator",
+    "license": "LGPL-3.0-or-later",
+    "source_manifest": "provenance/translator-source-manifest.json",
+    "source_manifest_sha256": "1aebac07a017326b4f9bbde2cf7fc9efdb2cf7c7abcaa94520095ab1cee157cf",
+    "polyform_material_copied": false,
+    "historical_translation_tool_binary_hash_recorded": false
+  },
+  "tools": {
+    "compiler": {
+      "original_path": ".tools/userspace/build-mesa-compiler/hackynavi-compiler/hackynavi-aco.exe",
+      "bytes": 13889536,
+      "sha256": "0494c73ae8508d97f2246226fd885181950ff1ea4804e8e0861955ad26f1646c",
+      "packaged": false,
+      "hash_evidence": "historical ACO provenance.json and current file match",
+      "license_context": "Mesa NIR/ACO individual source licenses plus MIT adapter; licenses/compiler-NOTICE.md",
+      "version_evidence": "provenance/compiler-build.json"
+    },
+    "validator": {
+      "original_path": ".tools/userspace/build-spirv-tools/tools/spirv-val.exe",
+      "bytes": 2584576,
+      "sha256": "155e1016991863970baed551afd7b348c4afebe341ce632663d73a95a76edf2e",
+      "packaged": false,
+      "hash_evidence": "historical ACO provenance.json and current file match",
+      "license_context": "SPIRV-Tools v2025.2 Apache-2.0; external tool, not redistributed",
+      "version": "SPIRV-Tools v2025.2 archive sha256=4a6147f9cb00ca33adedeB717c4b397480cd7f7f3128ac24dee8c24b6145ecf3\nTargets:\n  SPIR-V 1.0\n  SPIR-V 1.1\n  SPIR-V 1.2\n  SPIR-V 1.3\n  SPIR-V 1.4\n  SPIR-V 1.5\n  SPIR-V 1.6\n  SPIR-V 1.2 (under OpenCL 2.2 Full Profile semantics)\n  SPIR-V 1.0 (under Vulkan 1.0 semantics)\n  SPIR-V 1.3 (under Vulkan 1.1 semantics)\n  SPIR-V 1.4 (under Vulkan 1.1 semantics)\n  SPIR-V 1.5 (under Vulkan 1.2 semantics)\n  SPIR-V 1.6 (under Vulkan 1.3 semantics) SPIR-V 1.6 (under Vulkan 1.4 semantics)"
+    },
+    "translator": {
+      "original_path": "build/metal-compiler/debug/hackynavi-shader.exe",
+      "bytes": 38821316,
+      "sha256": "bee01f2026f56a751bb7f4bd65999de22a29a789338744791c7f46e56c4b40d5",
+      "packaged": false,
+      "hash_evidence": "observed file at packaging; original translation invocation did not record executable hash",
+      "license_context": "LGPL-3.0-or-later translator plus MIT adapter; licenses/metal-NOTICE.md"
+    },
+    "apple_metal": {
+      "version": "Apple metal version 32023.622 (metalfe-32023.622)",
+      "binary_sha256": null,
+      "reason": "system runtime compiler capture recorded version and output hashes, not system-library binary hash",
+      "packaged": false,
+      "evidence": "source/apple/provenance.json"
+    }
+  },
+  "launch_metadata": {
+    "abi_version": 1,
+    "compiler": "Mesa NIR/ACO",
+    "mesa_commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+    "target": "gfx1100",
+    "target_kind": "explicit_offline_compiler_target",
+    "wave_size": 32,
+    "workgroup_size": [
+      64,
+      1,
+      1
+    ],
+    "code_bytes": 104,
+    "executable_bytes": 84,
+    "code_alignment": 256,
+    "num_sgprs": 108,
+    "num_vgprs": 24,
+    "num_shared_vgprs": 0,
+    "spilled_sgprs": 0,
+    "spilled_vgprs": 0,
+    "lds_bytes": 0,
+    "scratch_bytes_per_wave": 0,
+    "float_mode": 192,
+    "mem_ordered": false,
+    "wgp_mode": true,
+    "compute_pgm_rsrc1": 539754498,
+    "compute_pgm_rsrc2": 1928,
+    "compute_pgm_rsrc3": 0,
+    "dispatch_initiator_required_bits": 32768,
+    "descriptor_binding_mask": 3,
+    "descriptor_set": 0,
+    "descriptor_stride_bytes": 16,
+    "descriptor_format": "GFX11 raw buffer descriptor, byte bounds",
+    "user_sgprs": {
+      "descriptor_table_gpu_va": [
+        0,
+        1
+      ],
+      "push_constants_gpu_va": [
+        2,
+        3
+      ]
+    },
+    "system_sgprs": {
+      "workgroup_x": 4,
+      "workgroup_y": 5,
+      "workgroup_z": 6,
+      "tg_size": 7
+    },
+    "system_vgprs": {
+      "packed_local_invocation_id": 0
+    },
+    "push_constant_bytes": 48,
+    "relocations": [],
+    "constants_bytes": 0
+  },
+  "files": {
+    ".gitattributes": {
+      "original_path": null,
+      "bytes": 92,
+      "sha256": "b97190d83f844443b79499915688e0c1861503f4bc0688e0c536944b6180c42c",
+      "role": "preserve exact historical byte hashes across Git platforms",
+      "license": "MIT"
+    },
+    "README.md": {
+      "original_path": null,
+      "bytes": 2752,
+      "sha256": "f2111d0c7dd5fd508bdf4e2ba50dac24dec8886ab1376b43fc632be13fa234ee",
+      "role": "authored fixture contract and verification instructions",
+      "license": "MIT"
+    },
+    "aco.txt": {
+      "original_path": "build/gfx11-compiler/apple-add-one-20261010-195643/aco.txt",
+      "bytes": 870,
+      "sha256": "d07b8fc9c84dd5bc722e97281559bbb7e219b67bd50c4b0c14d776f6b6ee93b3",
+      "role": "original ACO compiler product",
+      "license": "MIT-authored shader compiler output"
+    },
+    "licenses/HackyNavi-MIT.txt": {
+      "original_path": "LICENSE",
+      "bytes": 1100,
+      "sha256": "c1c033133358ac334cf65d251c1e236ced96bb71011d04fda48c2e537df1589d",
+      "role": "authored fixture and adapter license",
+      "license": "MIT"
+    },
+    "licenses/compiler-NOTICE.md": {
+      "original_path": "userspace/compiler/NOTICE.md",
+      "bytes": 3044,
+      "sha256": "a8bff1118905081b10f8a1fdeec20f5a522b38414df2f3a3d0ffa302bb413edf",
+      "role": "compiler source provenance and license notice",
+      "license": "MIT notice; upstream licenses retained"
+    },
+    "licenses/mesa-license.rst": {
+      "original_path": "userspace/compiler/licenses/mesa-license.rst",
+      "bytes": 1866,
+      "sha256": "e272a136f6ce1b855afeef2fbe44f94f17d3b4d91cef29f8364af5800c5838a8",
+      "role": "Mesa licensing overview",
+      "license": "upstream licensing notice"
+    },
+    "licenses/mesa/Apache-2.0": {
+      "original_path": "userspace/compiler/licenses/mesa/Apache-2.0",
+      "bytes": 10232,
+      "sha256": "aeae52465380b8b7959c940355e869cbbc277d4559a7ababa49cbc4818c051f5",
+      "role": "Mesa dependency license text only",
+      "license": "upstream license text"
+    },
+    "licenses/mesa/BSL-1.0": {
+      "original_path": "userspace/compiler/licenses/mesa/BSL-1.0",
+      "bytes": 1666,
+      "sha256": "cf7105f24feaf70f28b8de10074e4d37bef89b8f3ae0a5f1280237f027d77ec0",
+      "role": "Mesa dependency license text only",
+      "license": "upstream license text"
+    },
+    "licenses/mesa/GPL-1.0-or-later": {
+      "original_path": "userspace/compiler/licenses/mesa/GPL-1.0-or-later",
+      "bytes": 13307,
+      "sha256": "13ff2a162a56796d863de9373ea46860a0fc28da81c192e76da9704dc117c27b",
+      "role": "Mesa dependency license text only",
+      "license": "upstream license text"
+    },
+    "licenses/mesa/GPL-2.0-only": {
+      "original_path": "userspace/compiler/licenses/mesa/GPL-2.0-only",
+      "bytes": 18774,
+      "sha256": "535fe49430f3098603b190f07040d5b0c65eb8ed5fe173108e26eb668e758c00",
+      "role": "Mesa dependency license text only",
+      "license": "upstream license text"
+    },
+    "licenses/mesa/MIT": {
+      "original_path": "userspace/compiler/licenses/mesa/MIT",
+      "bytes": 1402,
+      "sha256": "a1179eae4e8b0ef06cbad6b6a2e324bb1c1cd9281cf40b42c0b15b0e34df2683",
+      "role": "Mesa dependency license text only",
+      "license": "upstream license text"
+    },
+    "licenses/mesa/SGI-B-2.0": {
+      "original_path": "userspace/compiler/licenses/mesa/SGI-B-2.0",
+      "bytes": 1844,
+      "sha256": "8299bbd83c4d77eb5ae767cf250e9b3b470218e863714cba2e5e7eaed51285f2",
+      "role": "Mesa dependency license text only",
+      "license": "upstream license text"
+    },
+    "licenses/mesa/exceptions/Linux-Syscall-Note": {
+      "original_path": "userspace/compiler/licenses/mesa/exceptions/Linux-Syscall-Note",
+      "bytes": 1281,
+      "sha256": "d3a16686cf8797fd8a7b35564b9de8586e6ed8e19c9447e16ab6dda0d411215d",
+      "role": "Mesa dependency license text only",
+      "license": "upstream license text"
+    },
+    "licenses/metal-NOTICE.md": {
+      "original_path": "userspace/metal/NOTICE.md",
+      "bytes": 2227,
+      "sha256": "e0cfa524c266b1378d9d5c18f4ac8c52941f2e1cdf3dbb1871413616d999dc38",
+      "role": "translator source provenance and license notice",
+      "license": "MIT notice; LGPL translator separately identified"
+    },
+    "licenses/metal2vulkan-GPL-3.0.txt": {
+      "original_path": "userspace/metal/vendor/metal2vulkan/COPYING",
+      "bytes": 35745,
+      "sha256": "00bae091020e407710393ccdaa2c09a995ce2fabe90a9cf7f2d36ab2e979c64f",
+      "role": "translator license text only",
+      "license": "GPL-3.0 text incorporated by LGPL"
+    },
+    "licenses/metal2vulkan-LGPL-3.0.txt": {
+      "original_path": "userspace/metal/vendor/metal2vulkan/LICENSE",
+      "bytes": 7803,
+      "sha256": "ece497a5eeb6de69a1342e4f469e7968fa49178a421e6e798f105328e06f8c82",
+      "role": "translator license text only",
+      "license": "LGPL-3.0-or-later"
+    },
+    "provenance.json": {
+      "original_path": "build/gfx11-compiler/apple-add-one-20261010-195643/provenance.json",
+      "bytes": 1101,
+      "sha256": "79f1ac717ad488c861a7789462a1a9fcc65e5b9649fbd0b53f8203b61a3ad79c",
+      "role": "original ACO compiler product",
+      "license": "MIT-authored shader compiler output"
+    },
+    "provenance/adapter/build.py": {
+      "original_path": "userspace/compiler/build.py",
+      "bytes": 5594,
+      "sha256": "9fc822a434c5d2b78bb9bad3de79c6dddaf0a2e152d2a673537757cb09e7cc70",
+      "role": "compiler adapter source snapshot",
+      "license": "MIT"
+    },
+    "provenance/adapter/compile.py": {
+      "original_path": "userspace/compiler/compile.py",
+      "bytes": 4067,
+      "sha256": "a15102bd44d3b20397d07e0ca5829e0ec67f256ec2f9432736df5fb936000ab5",
+      "role": "compiler adapter source snapshot",
+      "license": "MIT"
+    },
+    "provenance/adapter/compiler.c": {
+      "original_path": "userspace/compiler/compiler.c",
+      "bytes": 17529,
+      "sha256": "495ce9a615a9878a4239b4afdf5b39de85c0ec79fe4904668752911e80ac4e8f",
+      "role": "compiler adapter source snapshot",
+      "license": "MIT"
+    },
+    "provenance/adapter/hackynavi_gfx11.h": {
+      "original_path": "userspace/compiler/hackynavi_gfx11.h",
+      "bytes": 1111,
+      "sha256": "e9f6505015b77e5186e27af5beb87356dee9ba60e9689bf21154e886ae731cd7",
+      "role": "compiler adapter source snapshot",
+      "license": "MIT"
+    },
+    "provenance/adapter/meson.build": {
+      "original_path": "userspace/compiler/meson.build",
+      "bytes": 682,
+      "sha256": "e3058806e57eb4e1dc163fc2854b83702c9bd714d8402a7bc3bdfa9a7114ac4e",
+      "role": "compiler adapter source snapshot",
+      "license": "MIT"
+    },
+    "provenance/compiler-build.json": {
+      "original_path": "build/gfx11-compiler/build-report.json",
+      "bytes": 2207,
+      "sha256": "35c843c82678cce7b9b94db8c95d5e167bcf67d74dc8d8c69d7c226c32f18679",
+      "role": "historical compiler executable build report",
+      "license": "MIT"
+    },
+    "provenance/compiler-source-manifest.json": {
+      "original_path": "userspace/compiler/source-manifest.json",
+      "bytes": 582496,
+      "sha256": "f5b423665e8f2f94cc4d6137d392634135908e8b0aaad3c9c6d5f6c974f73152",
+      "role": "complete pinned Mesa compiler source inventory",
+      "license": "upstream individual licenses; see licenses/mesa"
+    },
+    "provenance/translator-source-manifest.json": {
+      "original_path": "userspace/metal/vendor/source-manifest.json",
+      "bytes": 33814,
+      "sha256": "1aebac07a017326b4f9bbde2cf7fc9efdb2cf7c7abcaa94520095ab1cee157cf",
+      "role": "pinned unmodified translator source inventory",
+      "license": "LGPL-3.0-or-later source provenance"
+    },
+    "shader.bin": {
+      "original_path": "build/gfx11-compiler/apple-add-one-20261010-195643/shader.bin",
+      "bytes": 104,
+      "sha256": "ac333acf99387a4063fae75a89dd4e6968907f6b78702d26442dd8a3575f7dda",
+      "role": "original ACO compiler product",
+      "license": "MIT-authored shader compiler output"
+    },
+    "shader.json": {
+      "original_path": "build/gfx11-compiler/apple-add-one-20261010-195643/shader.json",
+      "bytes": 1107,
+      "sha256": "6f407cda97124467ded3794ae29f3d02051d7d472cd956a794367174d7325c98",
+      "role": "original ACO compiler product",
+      "license": "MIT-authored shader compiler output"
+    },
+    "shader_data.hpp": {
+      "original_path": null,
+      "generated_by": "userspace/compiler/verify_fixture.py --write-header",
+      "bytes": 1433,
+      "sha256": "6adfae1912f73251001bfc4e66e4665f7cfa115a0d2fd6f81faeddb9eff0ea3a",
+      "role": "C++11 exact code-byte array, no page-tail padding",
+      "license": "MIT"
+    },
+    "source/add_one.metal": {
+      "original_path": "userspace/metal/tests/fixtures/add_one.metal",
+      "bytes": 310,
+      "sha256": "7d472226764b4873b7722cf1a6449d3e62f7ea616e1d884c7074a466107db884",
+      "role": "authored Metal input",
+      "license": "MIT"
+    },
+    "source/apple/add_one.air": {
+      "original_path": "userspace/metal/tests/fixtures/apple/add_one.air",
+      "bytes": 3184,
+      "sha256": "f8548fefe01df3e8fd479d0783be3527122b70674d54c4611c65ed0cdc8ce110",
+      "role": "Apple runtime compiled authored input",
+      "license": "MIT-authored shader compiler output"
+    },
+    "source/apple/provenance.json": {
+      "original_path": "userspace/metal/tests/fixtures/apple/provenance.json",
+      "bytes": 5427,
+      "sha256": "59446da718c295d16620ebdaf57766bd999f205925cb1bebb7a2e8799ae5bfc3",
+      "role": "original Apple capture and reader provenance",
+      "license": "MIT"
+    },
+    "translated/module.json": {
+      "original_path": "build/metal-compiler/apple-input/translated/module.json",
+      "bytes": 124,
+      "sha256": "0fb8aee464081ff0f5c6f70f717202ade63670de5985847fb48b00f5dd8a6f6c",
+      "role": "original AIR-derived translation product",
+      "license": "MIT-authored shader translation output"
+    },
+    "translated/reflection.json": {
+      "original_path": "build/metal-compiler/apple-input/translated/reflection.json",
+      "bytes": 3216,
+      "sha256": "18dd4291fd33362e2c245e2197ba34d1b7912ecb370f3645fb214b69220bf8f5",
+      "role": "original AIR-derived translation product",
+      "license": "MIT-authored shader translation output"
+    },
+    "translated/shader.spv": {
+      "original_path": "build/metal-compiler/apple-input/translated/shader.spv",
+      "bytes": 1384,
+      "sha256": "dc617a376ba9594f26dfb3b07656ef4a87236c5fb1ff387b02d0fdb8a59e2439",
+      "role": "original AIR-derived translation product",
+      "license": "MIT-authored shader translation output"
+    }
+  }
+}

@@ -15,13 +15,14 @@ Status add(Monitor& m,const Timing& t) {
     for(size_t i=0;i<m.modeCount;++i)if(same(m.modes[i],t)) {
         m.modes[i].preferred=m.modes[i].preferred||t.preferred;
         m.modes[i].native=m.modes[i].native||t.native;
+        m.modes[i].sources|=t.sources;
         if(t.vic)m.modes[i].vic=t.vic;
         return Status::Ok;
     }
     if(m.modeCount==kMaxModes)return Status::TooManyModes;
     m.modes[m.modeCount++]=t;return Status::Ok;
 }
-Status detailed(const uint8_t* p,Monitor& m,bool preferred,bool native) {
+Status detailed(const uint8_t* p,Monitor& m,bool preferred,bool native,uint8_t source) {
     if(!le16(p))return Status::Ok; // Monitor descriptor or unused slot.
     // Interlace, stereo, analog/composite sync need distinct programming.
     if((p[17]&0xe1) || (p[17]&0x18)!=0x18) { ++m.skippedTimings;return Status::Ok; }
@@ -36,11 +37,33 @@ Status detailed(const uint8_t* p,Monitor& m,bool preferred,bool native) {
     if(ha<64 || va<64 || !hb || !vb || !ho || !vo || !hw || !vw || ho+hw>hb || vo+vw>vb)
         return Status::BadTiming;
     Timing t={uint32_t(le16(p))*10,ha,va,uint16_t(ha+hb),uint16_t(ha+ho),uint16_t(ha+ho+hw),
-        uint16_t(va+vb),uint16_t(va+vo),uint16_t(va+vo+vw),bool(p[17]&2),bool(p[17]&4),preferred,native,0};
+        uint16_t(va+vb),uint16_t(va+vo),uint16_t(va+vo+vw),bool(p[17]&2),bool(p[17]&4),preferred,native,0,source};
+    return add(m,t);
+}
+Status typeVII(const uint8_t* db,size_t len,Monitor& m) {
+    // CTA extended tag, revision byte, one 20-byte descriptor. Unknown
+    // revision/descriptor extensions are counted rather than misinterpreted.
+    if(len<2)return Status::BadExtension;
+    if(db[2]!=2) { ++m.skippedTimings;return Status::Ok; }
+    if(len!=22)return Status::BadExtension;
+    const uint8_t* p=db+3;
+    if((p[3]&15)>8)return Status::BadTiming;
+    // Revision2 bit7 is 420-only, not a preferred-mode marker.
+    if(p[3]&0xf0) { ++m.skippedTimings;return Status::Ok; }
+    const uint32_t ha=uint32_t(le16(p+4))+1,hb=uint32_t(le16(p+6))+1;
+    const uint32_t ho=uint32_t(le16(p+8)&0x7fff)+1,hw=uint32_t(le16(p+10))+1;
+    const uint32_t va=uint32_t(le16(p+12))+1,vb=uint32_t(le16(p+14))+1;
+    const uint32_t vo=uint32_t(le16(p+16)&0x7fff)+1,vw=uint32_t(le16(p+18))+1;
+    if(ha<64 || va<64 || ha+hb>65535 || va+vb>65535 || ho+hw>hb || vo+vw>vb)
+        return Status::BadTiming;
+    const uint32_t clock=(uint32_t(p[0])|uint32_t(p[1])<<8|uint32_t(p[2])<<16)+1;
+    Timing t={clock,uint16_t(ha),uint16_t(va),uint16_t(ha+hb),uint16_t(ha+ho),uint16_t(ha+ho+hw),
+        uint16_t(va+vb),uint16_t(va+vo),uint16_t(va+vo+vw),bool(p[9]&0x80),bool(p[17]&0x80),
+        false,false,0,CtaTypeVII};
     return add(m,t);
 }
 bool vicTiming(uint8_t vic,Timing& t) {
-    t={};t.vic=vic;t.hPositive=t.vPositive=true;
+    t={};t.vic=vic;t.sources=CtaVic;t.hPositive=t.vPositive=true;
     if(vic==4 || vic==19) {
         t.pixelClockKHz=74250;t.width=1280;t.height=720;t.hTotal=vic==4?1650:1980;
         t.hSyncStart=vic==4?1390:1720;t.hSyncEnd=uint16_t(t.hSyncStart+40);
@@ -62,9 +85,13 @@ struct Caps {
     bool legacy,forum,video;
     uint8_t videoFlags;
     uint32_t legacyClock,forumClock;
-    uint8_t legacyFlags,forumFlags,frl;
+    uint8_t legacyFlags,forumLength,forumBytes[28]; // SCDS, excluding OUI/tag.
     uint32_t only420[8];
 };
+FrlCapability frlCapability(uint8_t code) {
+    static const uint8_t lanes[]={0,3,3,4,4,4,4},rate[]={0,3,6,6,8,10,12};
+    return {code,lanes[code],rate[code]}; // Caller validates code<=6.
+}
 Status capabilities(const uint8_t* p,size_t len,bool forum,Monitor& m,Caps& c) {
     if(forum) {
         if(len<7 || p[4]!=1)return Status::BadExtension;
@@ -72,9 +99,33 @@ Status capabilities(const uint8_t* p,size_t len,bool forum,Monitor& m,Caps& c) {
         const uint8_t flags=p[6]&0x88,frl=p[7]>>4;
         if(frl>6 || (clock>340000 && !(flags&0x80)) || ((frl || (flags&8)) && !(flags&0x80)))
             return Status::BadExtension;
-        if(c.forum && (c.forumClock!=clock || c.forumFlags!=flags || c.frl!=frl))
-            return Status::ConflictingCapabilities;
-        c.forum=true;c.forumClock=clock;c.forumFlags=flags;c.frl=frl;
+        HdmiDscCapability d={};d.present=len>=11;d.limitsPresent=len>=13;
+        if(d.present) {
+            d.supported1p2=bool(p[11]&0x80);
+            if(d.supported1p2) {
+                if(!d.limitsPresent || !frl)return Status::BadExtension;
+                d.native420=bool(p[11]&0x40);d.allBpp=bool(p[11]&8);d.bpcMask=p[11]&7;
+                const uint8_t dfrl=p[12]>>4;d.maxSlicesCode=p[12]&15;
+                if(dfrl>6 || d.maxSlicesCode>7 || (p[13]&0xc0))return Status::BadExtension;
+                d.frl=frlCapability(dfrl);d.totalChunkCode=p[13]&63;
+                if(d.totalChunkCode)d.maxTotalChunkBytes=1024u*(1u+d.totalChunkCode);
+                // Code7 differs between current edid-decode and pinned Linux.
+                // Preserve it without manufacturing a throughput guarantee.
+                if(d.maxSlicesCode && d.maxSlicesCode<=6) {
+                    static const uint8_t slices[]={0,1,2,4,8,8,12};
+                    d.maxSlices=slices[d.maxSlicesCode];d.sliceLimitsDecoded=true;
+                    d.sliceClockMHzBeforeKSliceAdjust=d.maxSlicesCode<=4?340:400;
+                }
+            }
+        }
+        const uint8_t scdsLength=uint8_t(len-3);
+        if(c.forum) {
+            if(c.forumLength!=scdsLength)return Status::ConflictingCapabilities;
+            for(size_t i=0;i<scdsLength;++i)if(c.forumBytes[i]!=p[4+i])return Status::ConflictingCapabilities;
+        }
+        c.forum=true;c.forumClock=clock;c.forumLength=scdsLength;
+        for(size_t i=0;i<scdsLength;++i)c.forumBytes[i]=p[4+i];
+        m.forumVersion=p[4];m.forumPayloadBytes=uint8_t(len);m.frl=frlCapability(frl);m.hdmiDsc=d;
         m.scdc=bool(flags&0x80);m.scrambleLowRates=bool(flags&8);m.frlCapable=frl!=0;
     } else {
         if(len<5)return Status::BadExtension;
@@ -128,6 +179,10 @@ Status cta(const uint8_t* p,Monitor& m,Caps& caps,size_t block) {
             } else if(db[1]==0x0e) {
                 m.skippedTimings+=uint16_t(len-1);
                 for(size_t j=2;j<=len;++j)caps.only420[db[j]/32]|=uint32_t(1)<<(db[j]%32);
+            } else if(db[1]==0x22) {
+                const auto s=typeVII(db,len,m);if(s!=Status::Ok)return s;
+            } else if(db[1]==0x23 || db[1]==0x2a) {
+                ++m.skippedTimings; // Type VIII/X require their own decoders.
             }
         }
         i+=len+1;
@@ -136,7 +191,7 @@ Status cta(const uint8_t* p,Monitor& m,Caps& caps,size_t block) {
     for(;offset+18<=127;offset+=18) {
         if(!le16(p+offset)) { padding=true;for(size_t j=0;j<18;++j)if(p[offset+j])return Status::BadExtension;continue; }
         if(padding)return Status::BadExtension;
-        const auto s=detailed(p+offset,m,false,n<(p[3]&15));if(s!=Status::Ok)return s;
+        const auto s=detailed(p+offset,m,false,n<(p[3]&15),CtaDtd);if(s!=Status::Ok)return s;
         ++n;
     }
     for(;offset<127;++offset)if(p[offset])return Status::BadExtension;
@@ -181,7 +236,7 @@ Status parse(const uint8_t* data,size_t bytes,Monitor& output) {
         if(bits&1)++m.skippedTimings;
     for(size_t i=38;i<54;i+=2)if(data[i]!=1 || data[i+1]!=1)++m.skippedTimings;
     for(size_t i=0;i<4;++i) {
-        const auto s=detailed(data+54+18*i,m,i==0 && (data[19]>=4 || (data[24]&2)),false);
+        const auto s=detailed(data+54+18*i,m,i==0 && (data[19]>=4 || (data[24]&2)),false,BaseDtd);
         if(s!=Status::Ok)return s;
     }
     for(size_t b=1;b<blocks;++b) {

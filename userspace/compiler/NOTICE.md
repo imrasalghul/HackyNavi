@@ -1,0 +1,15 @@
+# Compiler source provenance
+
+The HackyNavi adapter and build/test scripts in this directory are under the repository's MIT license, copyright 2026 HackyNavi contributors.
+
+Mesa sources are built from `https://gitlab.freedesktop.org/mesa/mesa.git`, revision `35b085c4c067f198ce0b6437d94678e47b9c645f`. `source-manifest.json` maps the materialized files to that revision and their original SHA-256 values. The staged copy retains their copyright and license notices. Source files remain under their individual upstream licenses; this adapter does not relicense them. Mesa's license texts and licensing overview are retained under `licenses/mesa` and `licenses/mesa-license.rst`.
+
+NIR, ACO, and the AMD common compiler helpers are predominantly MIT licensed and carry copyrights from their original authors, including AMD, Valve, Intel, Google, and Red Hat. The allocation-to-register encoding and shader argument conventions in the adapter follow the pinned RADV shader/compiler implementation. Utility dependencies retain their original licenses; do not interpret the adapter's MIT license as a replacement for those notices.
+
+The staged root Meson changes enable the graphics/compute compiler dependency slice while leaving all GPU API driver frontends disabled, then add AMD common, ACO, and the adapter target. The staged `ac_gpu_info.c` adds `<errno.h>` for Windows declarations. The Windows stage selects addrlib's actual scalar implementation with `ADDR_ALLOW_SIMD=0` because this Zig runtime lacks `__cpu_model` for AVX2 feature detection; no replacement feature-query function is supplied. There are no upstream source changes in `.research/mesa`.
+
+The Darwin stage narrows AMD common to the compiler helpers and NIR sources and omits platform queries and DRM/winsys sources. It extracts the complete, unmodified `ac_fill_compiler_info` function from the pinned `ac_gpu_info.c`, retaining the original copyright notice and using the real upstream type headers. `source-manifest-darwin.json` records the extracted function hash, generated file hash, base source-manifest hash, and configure command. It also records making the upstream `nm` lookup conditional on the disabled test suite and defining `HAVE_TSERVER` to select addrlib's public typedefs instead of Apple's private `addrExtDef.h`. No device-query substitute or unresolved-symbol bypass is introduced.
+
+Cobalt64's Darwin RADV patches at revision `d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65` were inspected for boundary design and the public addrlib typedef selection described above. No Cobalt64 driver frontend, winsys, mocked device, or validator implementation is included here. The offline compiler creates no physical device and does not report device capabilities.
+
+SPIRV-Tools validation uses the separately pinned real build documented by `userspace/metal/NOTICE.md` and its build scripts. Runtime build tools are external dependencies. For binary redistribution, retain the corresponding Mesa source/license notices and the compiler source manifest with the artifact.

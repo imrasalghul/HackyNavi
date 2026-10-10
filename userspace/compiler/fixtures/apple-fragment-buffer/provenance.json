@@ -1,0 +1,96 @@
+{
+  "success": true,
+  "prepared_only": false,
+  "stage": "/Users/victor/Library/Caches/HackyNavi-AppleFragmentBuffer-965811f49d214964b081b0d4b5f86cea",
+  "stage_removed": true,
+  "source_path": "userspace/compiler/fixtures/apple-fragment-buffer/fragment-buffer.metal",
+  "source_sha256": "52d24b232a0ae845d271c4fc5294239e1868f7fc35979303dbc4cd25064d1834",
+  "source_bytes": 267,
+  "capture_runner_sha256": "07c2be15c9299642135e1f2da07d80f3b077eef66d8ef19dfa4f098e5ce8891e",
+  "remote_script_sha256": "3e500f21d200cdcd2bd8afc753c2b9a0995b3234f9f0f0270431681e3111b7a6",
+  "gpu_execution": false,
+  "metal_objects_created": false,
+  "installation_performed": false,
+  "ssh_exit_code": 0,
+  "commands": [
+    {
+      "argv": [
+        "sw_vers"
+      ],
+      "exit_code": 0,
+      "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t15.8\nBuildVersion:\t\t24H22\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metal",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "Apple metal version 32023.864 (metalfe-32023.864)\nTarget: air64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Users/victor/Library/Developer/DVTDownloads/MetalToolchain/mounts/058e1b31129b642e40598a87b55aa54b2a29e538/Metal.xctoolchain/usr/metal/current/bin\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metal",
+        "-std=macos-metal2.4",
+        "-mmacosx-version-min=15.0",
+        "-c",
+        "fragment-buffer.metal",
+        "-o",
+        "fragment-buffer.air"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "--toolchain",
+        "com.apple.dt.toolchain.Metal.32023.864",
+        "metallib",
+        "fragment-buffer.air",
+        "-o",
+        "fragment-buffer.metallib"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "error": null,
+  "terminal": true,
+  "stage_bytes": 7123,
+  "artifacts": {
+    "fragment-buffer.metal": {
+      "bytes": 267,
+      "sha256": "52d24b232a0ae845d271c4fc5294239e1868f7fc35979303dbc4cd25064d1834"
+    },
+    "fragment-buffer.air": {
+      "bytes": 3360,
+      "sha256": "9892d6352fce8cef9b9864918b9823ac1835421f5ad0bb1ad668de5053ae63cb"
+    },
+    "fragment-buffer.metallib": {
+      "bytes": 3496,
+      "sha256": "d5feaa1df63810fbb0ee3013497d01cb814f7cbb02a99c32ea25867859acdefd"
+    }
+  },
+  "export_hashes_verified": true,
+  "cleanup_exit_code": 0,
+  "cleanup_stdout": "removed\n",
+  "cleanup_stderr": "",
+  "source_unchanged": true
+}

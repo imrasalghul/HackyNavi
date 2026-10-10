@@ -91,8 +91,13 @@ struct Device {
         const uint32_t old=s.get(d::Register::Wptr);CHECK(v==(old+64)%d::kInboxBytes);
         s.last.assign(s.memory.begin()+old,s.memory.begin()+old+64);
         // Simulated firmware consumes only the VRAM command selected by WPTR.
-        CHECK(s.last[0]==0x80 && !s.last[2] && (s.last[1]<=2));
-        CHECK(s.last[3]==(s.last[1]==0?12:s.last[1]==1?60:16));
+        if(s.last[0]==76) {
+            CHECK(s.last[1]==0 && s.last[2]==0 && s.last[3]==52);
+            for(size_t i=4;i<64;++i)CHECK(s.last[i]==0);
+        } else {
+            CHECK(s.last[0]==0x80 && !s.last[2] && (s.last[1]<=2));
+            CHECK(s.last[3]==(s.last[1]==0?12:s.last[1]==1?60:16));
+        }
         for(size_t i=4+s.last[3];i<64;++i)CHECK(s.last[i]==0);
         if(!s.dropPublish)s.regs[r]=v;
         s.pendingTarget=v;
@@ -223,6 +228,48 @@ void faults() {
     Device s;d::Inbox q;d::Result r{};CHECK(s.open(q,r)==d::Status::Ok);s.onesAt=s.accesses+1;
     CHECK(s.enable(q,r)==d::Status::DeviceUnavailable);CHECK(q.needsRecovery() && !r.submitted);
 }
+void fams() {
+    Device good; d::Inbox first; d::Result r{};
+    CHECK(first.checkIdle(r)==d::Status::Closed);
+    CHECK(first.disableFams(polls,r)==d::Status::Closed && !r.submitted);
+    CHECK(good.open(first,r)==d::Status::Ok);
+    CHECK(first.checkIdle(r)==d::Status::Ok && first.isOpen() && !good.writes && !good.vrWrites);
+    good.accesses=0;
+    CHECK(first.disableFams(polls,r)==d::Status::Ok);
+    const size_t count=good.accesses;
+    CHECK(r.slotWritten && r.submitted && r.consumed && !first.pending());
+    CHECK(get32(good.last,0)==0x3400004c);
+    for(size_t i=4;i<64;++i)CHECK(good.last[i]==0);
+    for(unsigned f=0;f<9;++f) {
+        Device s;d::Inbox q;CHECK(s.open(q,r)==d::Status::Ok);
+        if(f==0)s.rejectWrite=true;if(f==1)s.rejectFlush=true;if(f==2)s.rejectRead=true;
+        if(f==3)s.corrupt=true;if(f==4)s.changeMap=true;if(f==5)s.changePointer=true;
+        if(f==6)s.stall=true;if(f==7)s.dropPublish=true;if(f==8)s.badRptr=true;
+        CHECK(q.disableFams(polls,r)!=d::Status::Ok && q.needsRecovery());
+        CHECK(!r.consumed);
+        if(f<6)CHECK(!s.writes && !r.submitted);else CHECK(s.writes==1 && r.submitted);
+        const auto before=s.accesses;
+        CHECK(q.disableFams(polls,r)==d::Status::Faulted && s.accesses==before);
+        if(f==6) {
+            CHECK(q.checkIdle(r)==d::Status::Faulted);
+            s.set(d::Register::Rptr,s.pendingTarget);
+            CHECK(q.wait(polls,r)==d::Status::Ok && r.consumed && q.needsRecovery());
+        }
+    }
+    for(size_t i=1;i<=count;++i) {
+        Device s;d::Inbox q;CHECK(s.open(q,r)==d::Status::Ok);s.accesses=0;s.failAt=i;
+        CHECK(q.disableFams(polls,r)==d::Status::TransportError && q.needsRecovery());
+        const auto before=s.accesses;
+        CHECK(q.disableFams(polls,r)==d::Status::Faulted && s.accesses==before);
+    }
+    { Device s; d::Inbox q; CHECK(s.open(q,r)==d::Status::Ok);
+      const auto before=s.accesses;
+      CHECK(q.disableFams({0,10},r)==d::Status::InvalidArgument && s.accesses==before);
+      s.set(d::Register::Cw4Offset,uint32_t(mailbox)+256);
+      CHECK(q.checkIdle(r)==d::Status::MappingMismatch && q.needsRecovery());
+      CHECK(!s.writes && !s.vrWrites);
+    }
+}
 std::vector<uint8_t> file(const char* path) {std::ifstream f(path,std::ios::binary);return {std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>()};}
 void supplied(const char* discoveryPath,const char* romPath) {
     const auto b=file(discoveryPath);d::Layout l{};CHECK(d::buildLayout(b.data(),b.size(),0x100000,l)==d::Status::Ok);
@@ -234,6 +281,6 @@ void supplied(const char* discoveryPath,const char* romPath) {
 }
 }
 int main(int argc,char** argv) {
-    layoutAndRoutes();commands();preconditions();faults();if(argc>1)supplied(argv[1],argc>2?argv[2]:nullptr);
+    layoutAndRoutes();commands();preconditions();faults();fams();if(argc>1)supplied(argv[1],argc>2?argv[2]:nullptr);
     std::cout<<checks<<" checks, "<<failures<<" failures\n";return failures?1:0;
 }

@@ -1,0 +1,36 @@
+; SPDX-License-Identifier: MIT
+; Authored real vertex shader: three positions selected by Vulkan VertexIndex.
+; No vertex buffers, descriptors, varyings, streamout or hidden shader fixture.
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Vertex %main "main" %index %position
+OpDecorate %index BuiltIn VertexIndex
+OpDecorate %position BuiltIn Position
+%void = OpTypeVoid
+%fn = OpTypeFunction %void
+%int = OpTypeInt 32 1
+%bool = OpTypeBool
+%float = OpTypeFloat 32
+%vec4 = OpTypeVector %float 4
+%in_int = OpTypePointer Input %int
+%out_vec4 = OpTypePointer Output %vec4
+%index = OpVariable %in_int Input
+%position = OpVariable %out_vec4 Output
+%i0 = OpConstant %int 0
+%i1 = OpConstant %int 1
+%minus = OpConstant %float -1
+%zero = OpConstant %float 0
+%one = OpConstant %float 1
+%left = OpConstantComposite %vec4 %minus %minus %zero %one
+%right = OpConstantComposite %vec4 %one %minus %zero %one
+%top = OpConstantComposite %vec4 %zero %one %zero %one
+%main = OpFunction %void None %fn
+%entry = OpLabel
+%id = OpLoad %int %index
+%is0 = OpIEqual %bool %id %i0
+%is1 = OpIEqual %bool %id %i1
+%other = OpSelect %vec4 %is1 %right %top
+%selected = OpSelect %vec4 %is0 %left %other
+OpStore %position %selected
+OpReturn
+OpFunctionEnd

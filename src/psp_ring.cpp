@@ -95,17 +95,26 @@ Status mailbox(const Layout& l,const Io& io,const PollOptions& p,Result& r) {
 
 State::State():phase_(Phase::Fresh),layout_{},allocator_(nullptr),buffers_{},mc_{},
     wptr_(0),sequence_(0),pendingId_(0),requiredTmr_(0),tmr_{},pendingInput_{},
-    pending_(false),ringRetain_(false),tmrRetain_(false),tmrReady_(false) {}
+    pending_(false),ringRetain_(false),tmrRetain_(false),tmrReady_(false),ta_{},pendingTa_(2) {}
+bool State::needsTaRetention() const { return ta_[0].info.retained || ta_[1].info.retained; }
+bool State::taInformation(pspta::Kind kind,TaInformation& out) const {
+    const unsigned i=static_cast<unsigned>(kind);
+    if(i>=2) return false;
+    out=ta_[i].info; return true;
+}
 
 struct Access {
     static void retention(const State& s,Result& r) {
         r.ringRetentionRequired=s.ringRetain_; r.tmrRetentionRequired=s.tmrRetain_;
+        r.taRetentionRequired=s.needsTaRetention();
         r.fenceSequence=s.sequence_;
     }
     static Status finish(const State& s,Result& r,Status status) {
         retention(s,r); return end(r,status);
     }
     static Status fault(State& s,Result& r,Status status) {
+        if(s.pendingTa_<2 && s.ta_[s.pendingTa_].info.retained)
+            s.ta_[s.pendingTa_].info.phase=TaPhase::FaultedRetained;
         s.phase_=Phase::Faulted; return finish(s,r,status);
     }
     static bool allocation(const VramAllocator& a,VramAllocationHandle h,uint64_t minimum,
@@ -126,6 +135,14 @@ struct Access {
         if(s.pendingInput_.owner) {
             VramRange range={};
             if(s.allocator_->lookup(s.pendingInput_,range)!=VramAllocatorStatus::Ok) return false;
+        }
+        for(unsigned i=0;i<2;++i) if(s.ta_[i].info.retained) {
+            const auto& t=s.ta_[i]; uint64_t mc=0,pa=0; VramRange range={};
+            if(!allocation(*s.allocator_,t.shared,pspta::kSharedBytes,mc,pa,range) ||
+               range.bytes!=pspta::kSharedBytes || mc!=t.sharedMc) return false;
+            if(t.firmware.owner && (!allocation(*s.allocator_,t.firmware,4096,mc,pa,range) ||
+               t.firmwareOffset>range.bytes || t.firmwareBytes>range.bytes-t.firmwareOffset ||
+               t.firmwareOffset>UINT64_MAX-mc || mc+t.firmwareOffset!=t.firmwareMc)) return false;
         }
         return true;
     }
@@ -211,6 +228,9 @@ struct Access {
             bytes>range.bytes-offset || offset>UINT64_MAX-base) return finish(s,r,Status::InvalidAllocation);
         if(same(h,s.buffers_.ring) || same(h,s.buffers_.command) || same(h,s.buffers_.fence) ||
             (s.tmrRetain_ && same(h,s.tmr_))) return finish(s,r,Status::AliasedAllocation);
+        for(unsigned i=0;i<2;++i) if(s.ta_[i].info.retained &&
+            (same(h,s.ta_[i].shared) || (s.ta_[i].firmware.owner && same(h,s.ta_[i].firmware))))
+            return finish(s,r,Status::AliasedAllocation);
         mc=base+offset; return Status::Ok;
     }
     static Status submit(State& s,const Io& io,uint32_t id,VramAllocationHandle source,Result& r) {
@@ -242,6 +262,7 @@ struct Access {
     static Status simple(const Io& io,State& s,uint32_t id,Result& r) {
         Status status=begin(s,io,id,r); if(status!=Status::Ok) return status;
         if((id==7 || id==0x21) && !s.tmrReady_) return finish(s,r,Status::InvalidState);
+        if(id==7 && s.needsTaRetention()) return finish(s,r,Status::InvalidState);
         if(id==0x22) put(s.buffers_.scratch+28,2);
         return submit(s,io,id,{},r);
     }
@@ -267,6 +288,69 @@ struct Access {
         address(s.buffers_.scratch+28,mc); put(s.buffers_.scratch+36,uint32_t(range.bytes));
         put(s.buffers_.scratch+40,2); address(s.buffers_.scratch+44,physical);
         return submit(s,io,5,h,r);
+    }
+    static Status loadTa(const Io& io,State& s,pspta::Kind kind,VramAllocationHandle firmware,
+        uint64_t offset,uint32_t bytes,VramAllocationHandle shared,Result& r) {
+        Status status=begin(s,io,1,r); if(status!=Status::Ok) return status;
+        const unsigned i=static_cast<unsigned>(kind);
+        if(i>=2 || !bytes || (bytes&3)) return finish(s,r,Status::InvalidArgument);
+        if(!s.tmrReady_ || s.ta_[i].info.phase!=TaPhase::Fresh) return finish(s,r,Status::InvalidState);
+        uint64_t codeMc=0,sharedMc=0;
+        status=input(s,firmware,offset,bytes,codeMc,r); if(status!=Status::Ok) return status;
+        status=input(s,shared,0,pspta::kSharedBytes,sharedMc,r); if(status!=Status::Ok) return status;
+        VramRange range={};
+        if(s.allocator_->lookup(shared,range)!=VramAllocatorStatus::Ok || range.bytes!=pspta::kSharedBytes)
+            return finish(s,r,Status::InvalidAllocation);
+        if(same(firmware,shared)) return finish(s,r,Status::AliasedAllocation);
+        address(s.buffers_.scratch+28,codeMc); put(s.buffers_.scratch+36,bytes);
+        address(s.buffers_.scratch+40,sharedMc); put(s.buffers_.scratch+48,pspta::kSharedBytes);
+        auto& t=s.ta_[i]; t.shared=shared; t.sharedMc=sharedMc;
+        t.firmware=firmware; t.firmwareMc=codeMc; t.firmwareOffset=offset; t.firmwareBytes=bytes;
+        t.info.phase=TaPhase::Loading; t.info.retained=true; t.info.loadAttempted=true;
+        s.pendingTa_=uint8_t(i); // Retain before any upload/publication can fail.
+        return submit(s,io,1,firmware,r);
+    }
+    static Status taCommand(const Io& io,State& s,pspta::Kind kind,uint32_t command,bool unload,Result& r,
+        const pspdisplayta::State* owner=nullptr) {
+        const uint32_t id=unload ? 2u : 3u;
+        Status status=begin(s,io,id,r); if(status!=Status::Ok) return status;
+        const unsigned i=static_cast<unsigned>(kind);
+        if(i>=2) return finish(s,r,Status::InvalidArgument);
+        auto& t=s.ta_[i];
+        if(t.displayOwner!=owner || (unload&&t.displayOwner)) return finish(s,r,Status::InvalidState);
+        if(!s.tmrReady_ || !t.info.retained || !t.info.sessionValid || t.info.phase!=TaPhase::Loaded)
+            return finish(s,r,Status::InvalidState);
+        if(!unload && t.info.invocations==UINT32_MAX) return finish(s,r,Status::CounterExhausted);
+        put(s.buffers_.scratch+28,t.info.sessionId);
+        if(!unload) put(s.buffers_.scratch+32,command);
+        t.commandId=command; t.info.phase=unload ? TaPhase::Unloading : TaPhase::Invoking;
+        if(unload) t.info.unloadAttempted=true;
+        else ++t.info.invocations;
+        s.pendingTa_=uint8_t(i);
+        return submit(s,io,id,{},r);
+    }
+    // Firmware owns only the response at byte864. Every input/reserved word of
+    // our persistent-shared TA request must still match the private pending job.
+    static bool taRequestUnchanged(const State& s) {
+        if(s.pendingTa_>=2) return false;
+        const auto& t=s.ta_[s.pendingTa_]; const uint32_t id=s.pendingId_;
+        for(unsigned at=0;at<kResponse;at+=4) {
+            uint32_t want=0;
+            if(at==8) want=id;
+            if(id==1) {
+                if(at==28) want=uint32_t(t.firmwareMc);
+                if(at==32) want=uint32_t(t.firmwareMc>>32);
+                if(at==36) want=t.firmwareBytes;
+                if(at==40) want=uint32_t(t.sharedMc);
+                if(at==44) want=uint32_t(t.sharedMc>>32);
+                if(at==48) want=pspta::kSharedBytes;
+            } else {
+                if(at==28) want=t.info.sessionId;
+                if(at==32 && id==3) want=t.commandId;
+            }
+            if(get(s.buffers_.scratch+at)!=want) return false;
+        }
+        return true;
     }
     static Status wait(const Io& io,State& s,const PollOptions& p,Result& r) {
         r=Result{}; r.stage=Stage::Preflight; r.commandId=s.pendingId_;
@@ -294,13 +378,29 @@ struct Access {
         r.stage=Stage::ReadResponse;
         if(!download(s,io,s.buffers_.command,kCommandBytes,r)) return fault(s,r,r.status);
         if(get(s.buffers_.scratch+8)!=s.pendingId_) return fault(s,r,Status::ResponseCorrupt);
+        if(s.pendingId_<=3 && !taRequestUnchanged(s)) return fault(s,r,Status::ResponseCorrupt);
         r.responseStatus=get(s.buffers_.scratch+kResponse);
         if(r.responseStatus) {
             s.pending_=false; s.pendingInput_={};
             return fault(s,r,Status::CommandRejected);
         }
         const uint32_t id=s.pendingId_;
-        if(id==0x20) {
+        if(id<=3) {
+            auto& t=s.ta_[s.pendingTa_];
+            if(id==1) {
+                const uint32_t session=get(s.buffers_.scratch+kResponse+4);
+                const auto& other=s.ta_[s.pendingTa_^1u].info;
+                if(other.retained && other.sessionValid && other.sessionId==session)
+                    return fault(s,r,Status::ResponseCorrupt);
+                t.info.sessionId=session; t.info.sessionValid=true; t.info.loadAcknowledged=true;
+                t.firmware={}; // Source is no longer used after actual successful LOAD_TA.
+            }
+            if(id==2) {
+                t.info.unloadAcknowledged=true; t.info.retained=false;
+                t.info.phase=TaPhase::Retired; t.shared={};
+            } else t.info.phase=s.phase_==Phase::Running ? TaPhase::Loaded : TaPhase::FaultedRetained;
+            s.pendingTa_=2;
+        } else if(id==0x20) {
             r.tmrBytes=get(s.buffers_.scratch+kResponse+16);
             if(!tmrSizeValid(r.tmrBytes)) return fault(s,r,Status::InvalidTmrSize);
             s.requiredTmr_=r.tmrBytes;
@@ -326,6 +426,7 @@ struct Access {
         if(s.phase_==Phase::Stopped || s.phase_==Phase::Fresh || !s.ringRetain_)
             return finish(s,r,Status::InvalidState);
         if(s.pending_) return finish(s,r,Status::PendingCommand);
+        if(s.needsTaRetention()) return finish(s,r,Status::InvalidState);
         if(!ioValid(io) || !pollValid(p)) return finish(s,r,Status::InvalidArgument);
         if(!bindings(s)) return fault(s,r,Status::InvalidAllocation);
         r.stage=Stage::Stop;
@@ -339,6 +440,11 @@ struct Access {
     }
 };
 
+Status State::submitDisplayInvoke(const Io& io,pspta::Kind kind,uint32_t command,
+    const pspdisplayta::State& owner,Result& r) {
+    return Access::taCommand(io,*this,kind,command,false,r,&owner);
+}
+bool State::displayBindingsValid() const { return allocator_ && Access::bindings(*this); }
 Status buildLayout(const Navi31IpLayout& ips,uint64_t bytes,Layout& out) {
     out=Layout{};
     psp::Layout cold={}; const auto status=psp::buildLayout(ips,bytes,cold);
@@ -372,6 +478,16 @@ Status submitLoadIp(const Io& io,State& s,VramAllocationHandle h,uint64_t off,ui
     return Access::load(io,s,h,off,bytes,type,6,r);
 }
 Status submitAutoloadRlc(const Io& io,State& s,Result& r) { return Access::simple(io,s,0x21,r); }
+Status submitLoadTa(const Io& io,State& s,pspta::Kind kind,VramAllocationHandle firmware,
+    uint64_t offset,uint32_t bytes,VramAllocationHandle shared,Result& r) {
+    return Access::loadTa(io,s,kind,firmware,offset,bytes,shared,r);
+}
+Status submitInvokeTa(const Io& io,State& s,pspta::Kind kind,uint32_t command,Result& r) {
+    return Access::taCommand(io,s,kind,command,false,r);
+}
+Status submitUnloadTa(const Io& io,State& s,pspta::Kind kind,Result& r) {
+    return Access::taCommand(io,s,kind,0,true,r);
+}
 Status submitDestroyTmr(const Io& io,State& s,Result& r) { return Access::simple(io,s,7,r); }
 Status wait(const Io& io,State& s,const PollOptions& p,Result& r) { return Access::wait(io,s,p,r); }
 Status stop(const Io& io,State& s,const PollOptions& p,Result& r) { return Access::stop(io,s,p,r); }

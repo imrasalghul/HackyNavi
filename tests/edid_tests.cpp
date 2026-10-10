@@ -154,5 +154,100 @@ void counts() {
     b=fixture();b[126]=0;fix(b);
     CHECK(e::requiredBlocks(b.data(),128,count,final)==e::Status::Ok && count==1 && final);
 }
+std::vector<uint8_t> forumFixture(size_t len=13) {
+    auto b=fixture();std::memset(b.data()+145,0,110);
+    // Exact G90XF capability bytes, without the EDID's identifying serial.
+    const uint8_t forum[]={0x6d,0xd8,0x5d,0xc4,1,120,0x80,0x6b,0,0x30,0xa5,0xc3,0x64,0x3f};
+    std::memcpy(b.data()+145,forum,len+1);b[145]=uint8_t(0x60|len);
+    b[130]=uint8_t(18+len);fix(b);return b;
 }
-int main(){basic();faults();extensions();counts();std::cout<<checks<<" EDID checks, "<<failures<<" failures\n";return failures?1:0;}
+void forumDsc() {
+    e::Monitor m={};auto b=forumFixture();
+    CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok);
+    CHECK(m.forumVersion==1 && m.forumPayloadBytes==13);
+    CHECK(m.frl.code==6 && m.frl.maxLanes==4 && m.frl.maxGbpsPerLane==12);
+    const auto& d=m.hdmiDsc;
+    CHECK(d.present && d.supported1p2 && d.limitsPresent && d.native420 && !d.allBpp);
+    CHECK(d.bpcMask==3 && d.maxSlicesCode==4 && d.maxSlices==8 && d.sliceLimitsDecoded);
+    CHECK(d.sliceClockMHzBeforeKSliceAdjust==340 && d.totalChunkCode==63 && d.maxTotalChunkBytes==65536);
+    CHECK(d.frl.code==6 && d.frl.maxLanes==4 && d.frl.maxGbpsPerLane==12);
+    // Equivalent HF-SCDB carries the same SCDS; source header/OUI differ.
+    const size_t at=159;std::memcpy(b.data()+at,b.data()+145,14);
+    b[at]=0xed;b[at+1]=0x79;b[at+2]=b[at+3]=0;b[130]+=14;fix(b);
+    CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok);
+    for(size_t i=4;i<=13;++i) {
+        auto c=b;c[at+i]^=i==7?1:2;fix(c);
+        // Version/DSC reserved encodings can be malformed before conflict.
+        const auto s=e::parse(c.data(),c.size(),m);
+        CHECK(s==e::Status::ConflictingCapabilities || s==e::Status::BadExtension);
+    }
+    const uint8_t lanes[]={0,3,3,4,4,4,4},rates[]={0,3,6,6,8,10,12};
+    for(uint8_t i=0;i<16;++i) {
+        b=forumFixture(7);b[152]=uint8_t(i<<4);fix(b);
+        if(i>6){rejected(b,e::Status::BadExtension);continue;}
+        CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok);
+        CHECK(m.frl.code==i && m.frl.maxLanes==lanes[i] && m.frl.maxGbpsPerLane==rates[i]);
+        CHECK(m.frlCapable==bool(i) && !m.hdmiDsc.present && !m.hdmiDsc.supported1p2);
+    }
+    const uint8_t slices[]={0,1,2,4,8,8,12,0};
+    for(uint8_t i=0;i<16;++i) {
+        b=forumFixture();b[157]=uint8_t(0x60|i);fix(b);
+        if(i>7){rejected(b,e::Status::BadExtension);continue;}
+        CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok);
+        CHECK(m.hdmiDsc.maxSlicesCode==i && m.hdmiDsc.maxSlices==slices[i]);
+        CHECK(m.hdmiDsc.sliceLimitsDecoded==(i>0 && i<7));
+    }
+    for(uint8_t i=0;i<64;++i) {
+        b=forumFixture();b[158]=i;fix(b);
+        CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok);
+        CHECK(m.hdmiDsc.totalChunkCode==i && m.hdmiDsc.maxTotalChunkBytes==(i?1024u*(1u+i):0));
+    }
+    for(size_t len=7;len<=13;++len) {
+        b=forumFixture(len);
+        if(len==11 || len==12){rejected(b,e::Status::BadExtension);continue;}
+        CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok);
+        CHECK(m.hdmiDsc.supported1p2==(len==13));
+    }
+    b=forumFixture();b[157]=0x74;fix(b);rejected(b,e::Status::BadExtension);
+    b=forumFixture();b[158]|=0x80;fix(b);rejected(b,e::Status::BadExtension);
+    b=forumFixture();b[152]=0;fix(b);rejected(b,e::Status::BadExtension);
+    b=forumFixture();b[156]=0x8f;fix(b);
+    CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok && m.hdmiDsc.bpcMask==7 && m.hdmiDsc.allBpp);
+}
+std::vector<uint8_t> typeVIIFixture() {
+    auto b=forumFixture();
+    // Exact G90XF 165Hz CTA Type VII descriptor, no identifying bytes.
+    const uint8_t timing[]={0xf6,0x22,0x02,0x41,0xdc,0x18,0x04,0xff,0x0e,0x7f,0x01,
+        0x9f,0x80,0x1f,0x00,0x6f,0x08,0xb1,0x00,0x02,0x00,0x09,0x00};
+    std::memcpy(b.data()+159,timing,sizeof(timing));b[130]+=sizeof(timing);fix(b);return b;
+}
+void typeVII() {
+    e::Monitor m={};auto b=typeVIIFixture();
+    CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok && m.modeCount==4);
+    const auto& t=m.modes[3];
+    CHECK(t.sources==e::CtaTypeVII && !t.vic && !t.preferred && !t.native);
+    CHECK(t.pixelClockKHz==1629250 && t.width==3840 && t.height==2160);
+    CHECK(t.hTotal==4224 && t.hSyncStart==4000 && t.hSyncEnd==4032 && t.hPositive);
+    CHECK(t.vTotal==2338 && t.vSyncStart==2163 && t.vSyncEnd==2173 && !t.vPositive);
+    CHECK(m.modes[0].sources==(e::BaseDtd|e::CtaVic));
+    for(unsigned bit=4;bit<8;++bit) {
+        b=typeVIIFixture();b[165]|=uint8_t(1u<<bit);fix(b);
+        CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok && m.modeCount==3 && m.skippedTimings==2);
+    }
+    b=typeVIIFixture();b[161]=3;fix(b);
+    CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok && m.modeCount==3 && m.skippedTimings==2);
+    for(unsigned len=1;len<22;++len) {
+        b=typeVIIFixture();b[159]=uint8_t(0xe0|len);b[130]=uint8_t(32+len);
+        std::memset(b.data()+160+len,0,95-len);fix(b);rejected(b,e::Status::BadExtension);
+    }
+    b=typeVIIFixture();b[165]=9;fix(b);rejected(b,e::Status::BadTiming);
+    // 16-bit wire dimensions +1 and total sums must never wrap to a mode.
+    for(size_t offset: {size_t(166),size_t(168),size_t(172),size_t(174),size_t(176),size_t(180)}) {
+        b=typeVIIFixture();b[offset]=b[offset+1]=255;fix(b);rejected(b,e::Status::BadTiming);
+    }
+    b=typeVIIFixture();b[162]=b[163]=b[164]=255;fix(b);
+    CHECK(e::parse(b.data(),b.size(),m)==e::Status::Ok && m.modes[3].pixelClockKHz==16777216);
+    // A structurally valid sink timing is not permission to program that clock.
+}
+}
+int main(){basic();faults();extensions();counts();forumDsc();typeVII();std::cout<<checks<<" EDID checks, "<<failures<<" failures\n";return failures?1:0;}

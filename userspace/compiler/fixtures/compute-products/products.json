@@ -1,0 +1,289 @@
+{
+  "schema": 1,
+  "hardware_executed": false,
+  "native_admission": false,
+  "compiler_sha256": "0494c73ae8508d97f2246226fd885181950ff1ea4804e8e0861955ad26f1646c",
+  "pipeline_library_sha256": "8c148a0a1393c27250a3e9ccf8ccedd487fe09658c8f03d3ff3d940d8f01aceb",
+  "variants": [
+    {
+      "kernel": "add_one",
+      "local": [
+        64,
+        1,
+        1
+      ],
+      "source": "userspace/metal/tests/fixtures/apple/add_one.air",
+      "source_sha256": "f8548fefe01df3e8fd479d0783be3527122b70674d54c4611c65ed0cdc8ce110",
+      "spirv_sha256": "dc617a376ba9594f26dfb3b07656ef4a87236c5fb1ff387b02d0fdb8a59e2439",
+      "code_sha256": "ac333acf99387a4063fae75a89dd4e6968907f6b78702d26442dd8a3575f7dda",
+      "code_hex": "900085be020085bf000208f4000000f8000308f40000000a810100f40c0000f8000046d6040c010407fc89bf010087bf000047d606000a02000050e000014280f70389bf8102024a000068e0000143800000b0bf00009fbf00009fbf00009fbf00009fbf00009fbf",
+      "metadata": {
+        "abi_version": 1,
+        "compiler": "Mesa NIR/ACO",
+        "mesa_commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+        "target": "gfx1100",
+        "target_kind": "explicit_offline_compiler_target",
+        "wave_size": 32,
+        "workgroup_size": [
+          64,
+          1,
+          1
+        ],
+        "code_bytes": 104,
+        "executable_bytes": 84,
+        "code_alignment": 256,
+        "num_sgprs": 108,
+        "num_vgprs": 24,
+        "num_shared_vgprs": 0,
+        "spilled_sgprs": 0,
+        "spilled_vgprs": 0,
+        "lds_bytes": 0,
+        "scratch_bytes_per_wave": 0,
+        "float_mode": 192,
+        "mem_ordered": false,
+        "wgp_mode": true,
+        "compute_pgm_rsrc1": 539754498,
+        "compute_pgm_rsrc2": 1928,
+        "compute_pgm_rsrc3": 0,
+        "dispatch_initiator_required_bits": 32768,
+        "descriptor_binding_mask": 3,
+        "descriptor_set": 0,
+        "descriptor_stride_bytes": 16,
+        "descriptor_format": "GFX11 raw buffer descriptor, byte bounds",
+        "user_sgprs": {
+          "descriptor_table_gpu_va": [
+            0,
+            1
+          ],
+          "push_constants_gpu_va": [
+            2,
+            3
+          ]
+        },
+        "system_sgprs": {
+          "workgroup_x": 4,
+          "workgroup_y": 5,
+          "workgroup_z": 6,
+          "tg_size": 7
+        },
+        "system_vgprs": {
+          "packed_local_invocation_id": 0
+        },
+        "push_constant_bytes": 48,
+        "relocations": [],
+        "constants_bytes": 0
+      },
+      "standalone_equal": true
+    },
+    {
+      "kernel": "add_one",
+      "local": [
+        3,
+        1,
+        1
+      ],
+      "source": "userspace/metal/tests/fixtures/apple/add_one.air",
+      "source_sha256": "f8548fefe01df3e8fd479d0783be3527122b70674d54c4611c65ed0cdc8ce110",
+      "spirv_sha256": "dc617a376ba9594f26dfb3b07656ef4a87236c5fb1ff387b02d0fdb8a59e2439",
+      "code_sha256": "98b773c473a79de6d64f7ed6f9e559fd88d5a87058e67dfab484bd1264a5c93f",
+      "code_hex": "900085be020085bf000208f4000000f8000308f40000000a810100f40c0000f80483049607fc89bf990087bf000055d60608000482000030000050e000014280f70389bf8102024a000068e0000143800000b0bf00009fbf00009fbf00009fbf00009fbf00009fbf",
+      "metadata": {
+        "abi_version": 1,
+        "compiler": "Mesa NIR/ACO",
+        "mesa_commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+        "target": "gfx1100",
+        "target_kind": "explicit_offline_compiler_target",
+        "wave_size": 32,
+        "workgroup_size": [
+          3,
+          1,
+          1
+        ],
+        "code_bytes": 104,
+        "executable_bytes": 84,
+        "code_alignment": 256,
+        "num_sgprs": 108,
+        "num_vgprs": 24,
+        "num_shared_vgprs": 0,
+        "spilled_sgprs": 0,
+        "spilled_vgprs": 0,
+        "lds_bytes": 0,
+        "scratch_bytes_per_wave": 0,
+        "float_mode": 192,
+        "mem_ordered": false,
+        "wgp_mode": true,
+        "compute_pgm_rsrc1": 539754498,
+        "compute_pgm_rsrc2": 1928,
+        "compute_pgm_rsrc3": 0,
+        "dispatch_initiator_required_bits": 32768,
+        "descriptor_binding_mask": 3,
+        "descriptor_set": 0,
+        "descriptor_stride_bytes": 16,
+        "descriptor_format": "GFX11 raw buffer descriptor, byte bounds",
+        "user_sgprs": {
+          "descriptor_table_gpu_va": [
+            0,
+            1
+          ],
+          "push_constants_gpu_va": [
+            2,
+            3
+          ]
+        },
+        "system_sgprs": {
+          "workgroup_x": 4,
+          "workgroup_y": 5,
+          "workgroup_z": 6,
+          "tg_size": 7
+        },
+        "system_vgprs": {
+          "packed_local_invocation_id": 0
+        },
+        "push_constant_bytes": 48,
+        "relocations": [],
+        "constants_bytes": 0
+      },
+      "standalone_equal": true
+    },
+    {
+      "kernel": "affine_xor",
+      "local": [
+        64,
+        1,
+        1
+      ],
+      "source": "userspace/metal/tests/fixtures/affine_xor.ll",
+      "source_sha256": "8a2525c9b88af9b3fdc3bdf63a30320202c1949b4f81ac98852cedba227729df",
+      "spirv_sha256": "c9d3614c957dd0fb5e9503360712a88368ebd4463f850601c1834f69ebe0af95",
+      "code_sha256": "66bc66e2cb814db18d426cc38eb52bc4c843b3a1619952de20945d9a018ce0f4",
+      "code_hex": "900085be020085bf000208f4000000f8000308f40000000a810100f40c0000f8000046d6040c010407fc89bf910087bf0600004a82000230000050e001024280f70389bf02002cd787040202010087bf020045d6ff0402045a5a5a5a000068e0010243800000b0bf00009fbf00009fbf00009fbf00009fbf00009fbf",
+      "metadata": {
+        "abi_version": 1,
+        "compiler": "Mesa NIR/ACO",
+        "mesa_commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+        "target": "gfx1100",
+        "target_kind": "explicit_offline_compiler_target",
+        "wave_size": 32,
+        "workgroup_size": [
+          64,
+          1,
+          1
+        ],
+        "code_bytes": 124,
+        "executable_bytes": 104,
+        "code_alignment": 256,
+        "num_sgprs": 108,
+        "num_vgprs": 24,
+        "num_shared_vgprs": 0,
+        "spilled_sgprs": 0,
+        "spilled_vgprs": 0,
+        "lds_bytes": 0,
+        "scratch_bytes_per_wave": 0,
+        "float_mode": 192,
+        "mem_ordered": false,
+        "wgp_mode": true,
+        "compute_pgm_rsrc1": 539754498,
+        "compute_pgm_rsrc2": 1928,
+        "compute_pgm_rsrc3": 0,
+        "dispatch_initiator_required_bits": 32768,
+        "descriptor_binding_mask": 3,
+        "descriptor_set": 0,
+        "descriptor_stride_bytes": 16,
+        "descriptor_format": "GFX11 raw buffer descriptor, byte bounds",
+        "user_sgprs": {
+          "descriptor_table_gpu_va": [
+            0,
+            1
+          ],
+          "push_constants_gpu_va": [
+            2,
+            3
+          ]
+        },
+        "system_sgprs": {
+          "workgroup_x": 4,
+          "workgroup_y": 5,
+          "workgroup_z": 6,
+          "tg_size": 7
+        },
+        "system_vgprs": {
+          "packed_local_invocation_id": 0
+        },
+        "push_constant_bytes": 48,
+        "relocations": [],
+        "constants_bytes": 0
+      },
+      "standalone_equal": true
+    },
+    {
+      "kernel": "affine_xor",
+      "local": [
+        3,
+        1,
+        1
+      ],
+      "source": "userspace/metal/tests/fixtures/affine_xor.ll",
+      "source_sha256": "8a2525c9b88af9b3fdc3bdf63a30320202c1949b4f81ac98852cedba227729df",
+      "spirv_sha256": "c9d3614c957dd0fb5e9503360712a88368ebd4463f850601c1834f69ebe0af95",
+      "code_sha256": "0a9ad10b394dce951c53a04726ff40a2f24dee3574758a905382ed7f79b0a723",
+      "code_hex": "900085be020085bf000208f4000000f8000308f40000000a810100f40c0000f80483049607fc89bf990087bf000055d60608000482000230000050e001024280f70389bf02002cd787040202010087bf020045d6ff0402045a5a5a5a000068e0010243800000b0bf00009fbf00009fbf00009fbf00009fbf00009fbf",
+      "metadata": {
+        "abi_version": 1,
+        "compiler": "Mesa NIR/ACO",
+        "mesa_commit": "35b085c4c067f198ce0b6437d94678e47b9c645f",
+        "target": "gfx1100",
+        "target_kind": "explicit_offline_compiler_target",
+        "wave_size": 32,
+        "workgroup_size": [
+          3,
+          1,
+          1
+        ],
+        "code_bytes": 124,
+        "executable_bytes": 104,
+        "code_alignment": 256,
+        "num_sgprs": 108,
+        "num_vgprs": 24,
+        "num_shared_vgprs": 0,
+        "spilled_sgprs": 0,
+        "spilled_vgprs": 0,
+        "lds_bytes": 0,
+        "scratch_bytes_per_wave": 0,
+        "float_mode": 192,
+        "mem_ordered": false,
+        "wgp_mode": true,
+        "compute_pgm_rsrc1": 539754498,
+        "compute_pgm_rsrc2": 1928,
+        "compute_pgm_rsrc3": 0,
+        "dispatch_initiator_required_bits": 32768,
+        "descriptor_binding_mask": 3,
+        "descriptor_set": 0,
+        "descriptor_stride_bytes": 16,
+        "descriptor_format": "GFX11 raw buffer descriptor, byte bounds",
+        "user_sgprs": {
+          "descriptor_table_gpu_va": [
+            0,
+            1
+          ],
+          "push_constants_gpu_va": [
+            2,
+            3
+          ]
+        },
+        "system_sgprs": {
+          "workgroup_x": 4,
+          "workgroup_y": 5,
+          "workgroup_z": 6,
+          "tg_size": 7
+        },
+        "system_vgprs": {
+          "packed_local_invocation_id": 0
+        },
+        "push_constant_bytes": 48,
+        "relocations": [],
+        "constants_bytes": 0
+      },
+      "standalone_equal": true
+    }
+  ]
+}

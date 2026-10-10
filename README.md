@@ -2,6 +2,18 @@
 
 HackyNavi is a Navi 31 / Radeon RX 7900 XTX driver under development for **macOS 15.8.1, x86_64**. Implemented code includes owned DMA/GART memory, PSP firmware loading and command transport, graphics firmware autoload, SMU wake controls, GC11 initialization and graphics/SDMA queues, DMCUB firmware boot, DisplayPort AUX/link training and HDMI DDC transport. Kernel adapters use real allocations and uncached MMIO; peripheral emulation is confined to host tests. **The PCI service does not yet run the complete startup sequence. Rendering, Metal integration and HDMI/DP modesetting remain unfinished, and no GPU execution or working display has been verified.**
 
+The [first target boot](docs/validation-2026-10-10-passive-boot.md) loaded the
+frozen passive diagnostic kext on macOS 15.8.1 (24H32) and captured the correct
+7900 XTX identity and BAR configuration. That establishes loading and PCI
+observation only. HDR is deferred while bootable acceleration is developed.
+
+Current work, parallel assignments and validation are recorded in
+[STATUS.md](STATUS.md). See [PLAN.md](PLAN.md) for integration dependencies and
+completion criteria, and [HANDOFF.md](HANDOFF.md) for the current Windows/Mac
+build workflow. macOS is installed on the target and OpenCore is on USB;
+The passive test has now passed; active hardware stages need their own
+identified builds and procedures.
+
 ## Implemented
 
 | Component | Current behavior |
@@ -34,10 +46,12 @@ HackyNavi is a Navi 31 / Radeon RX 7900 XTX driver under development for **macOS
 | DIO and DisplayPort training | Programs source routing, lane count and training patterns; negotiates supported sink capabilities and verifies clock recovery, equalization, symbol lock and alignment. Uses real AUX/DMCUB/DIO adapters. A trained idle link does not establish scanout or visible output. |
 | Runtime ROM and cold takeover | Acquires the selected live SMUIO ROM image, validates board binding and checks stopped auxiliary engines. Captures inherited boot scanout and implements bounded HUBP blank/drain retirement. |
 | Kernel engine coordinator | Connects fresh discovery/ROM, reservations, GART, PSP, graphics verification and DMCUB startup. Requires the PCI owner to supply power/reset exclusion; service activation is pending. |
-| DCN3.2 HDMI DDC and TMDS | Implements shared physical I2C arbitration/FIFO, pin selection, clock-derived prescale, EDID/SCDC transactions and source PHY activation through DMCUB/DIO. Negotiates scrambling/clock ratio against explicit sink and board limits. Native controller tracks HDMI versus DP teardown. Pixel timing, AVI packets and scanout remain separate work. |
+| DCN3.2 HDMI DDC and TMDS | Implements shared physical I2C arbitration/FIFO, pin selection, clock-derived prescale, EDID/SCDC transactions and source PHY activation through DMCUB/DIO. Negotiates scrambling/clock ratio against explicit sink and board limits. Native controller tracks HDMI versus DP teardown. Timing and AVI protocols exist separately; complete scanout/modeset integration remains. |
 | EDID modes and capabilities | Validates complete digital EDID captures, checks every block checksum and extension-count override, decodes progressive detailed timings/common CTA modes and HDMI capabilities, and excludes YCbCr 4:2:0-only modes from RGB output. |
 | DCN3.2 packet memory | Writes generic packet headers/payloads through VPG SRAM and waits for immediate-update completion, with bounded lock/power checks and retained ownership on failure. AVI version-2 construction supports RGB/444 and uses parsed sink quantization capabilities. The HDMI stream controller schedules AVI, resets/enables FIFO, checks frame progress and clears AVMUTE; the kernel display owner binds stream startup/teardown to its HDMI route. Scanout pipeline integration remains unfinished. |
 | DCN3.2 output timing | Programs progressive single-pipe RGB OTG/VTG/ODM timing, verifies master enable and frame-counter progress, and disables timing clocks after bounded master-off/busy checks. Pixel PLL, scanout pipeline and native modeset integration remain unfinished. |
+| DCN3.2 display clocks | Programs per-pipe DPP DTO and OTG dividers while preserving neighboring fields. Native display ownership now connects these to DAL SMU clock minima, firmware-reported completion and an established DPP reference frequency. It orders DTO/firmware shutdown before acknowledged terminal minimum release. Complete modeset, power and bandwidth policy remain unfinished; hardware behavior is unverified. |
+| DCN3.2 shared-clock admission | Fresh read-only checks across all four OTGs, HUBPs and MPC selectors/status/locks reject active display consumers before clock changes. Caller must exclude autonomous firmware and PM actors. This does not retire memory or stop hardware. |
 | Kernel GART storage | Owns fault-page, data, writeback and display DMA buffers and builds a CPU page-table image with invalid guard pages. The fault-page address is backed by a real allocation. No VRAM upload or hardware reference is created by storage allocation alone. |
 | GART protocol | Builds and executes bounded GC 11 / MMHUB 3 VMID0 register plans, with mandatory HDP flushing and engine 17 invalidation. Simulated-MMIO coverage; not yet called by the service. |
 | HDP protocol | Resolves NBIO 4.3 remap controls from discovery, configures the remap hole, and implements the CPU memory flush with posting read. Simulated-MMIO coverage; not yet called by the service. |
@@ -45,7 +59,7 @@ HackyNavi is a Navi 31 / Radeon RX 7900 XTX driver under development for **macOS
 | Kernel GART controller | Connects real DMA buffers, private VRAM allocation, upload/readback, HDP setup and separate MMHUB/GFXHUB activation through uncached BAR5 MMIO. Retains resources across partial hardware failure. Compiled; not yet activated by the PCI service or hardware-tested. |
 | `collect-linux.py` | Collects existing sysfs identity, resource descriptions, memory/link attributes, driver binding, and exported IP discovery for `1002:744c`. |
 | `HackyNavi.kext` source | Attaches to `IOResources`, observes matching PCI devices, and publishes bounded historical snapshots. Reads PCI configuration and existing ROM registry properties. |
-| `HackyNaviDevice` source | Opt-in PCI service for `1002:744c`. Joins IOKit power management, captures discovery/MMHUB memory state on power-up, and gates MMIO and invalidates snapshots on power-down, shutdown and teardown. Hardware operation remains untested. |
+| `HackyNaviDevice` source | Opt-in PCI service for `1002:744c`. Acquires BAR5 per powered generation, captures discovery/MMHUB state, and revokes mappings/snapshots on power-down, shutdown and termination. Opens/closes the provider outside the acquisition mutex and closes during termination before waiting for stop. Engine DMA retirement and runtime validation remain pending. |
 
 The observer does not claim the GPU, map BARs, size-probe BARs, load firmware, execute ATOM commands, change power state, or expose an accelerator/user client. Its `ConfiguredBARs` addresses are configured values; `BARSizeStatus` remains `NotProbed`. Missing ROM properties are reported as missing, rather than fetched through hardware.
 
@@ -142,7 +156,7 @@ Additional suites passed **6,240 discovery checks**, **39,358 firmware checks**,
 
 The supplied ROM also contains two identical 1,756-byte discovery payloads at offsets `0xB5D00` and `0x195D00`. Both validate as binary version 1.4 / IP table version 3 with 61 IP records. They describe GC 11.0.0, SDMA 6.0.0, MP0/MP1 13.0.0, and DMU/DCN 3.2.0, among other blocks. This is target ROM evidence; live discovery, enabled topology and running firmware remain unverified. See [architecture.md](docs/architecture.md#target-rom-discovery-evidence) for hashes and scope.
 
-Memory work passes **1,618 register-layout assertions**, **59 memory-layout checks**, **58,536 GPUVM assertions**, and **35,364 VRAM allocator assertions**. The allocator is also checked against an independent page bitmap over 10,000 operations. The optional extracted target discovery payload increases register-layout coverage to 1,627 passing assertions. The HDP suite passes **895 assertions**, or **899** with that payload. GART's **2,229 assertions** cover register values, ordering, injected failures, timeouts, semaphore cleanup and verified disable. The VRAM transfer suite covers maximum-size uploads, selector boundaries, stale handles, aliases and partial failures using simulated MMIO. All 44 current C++ suites have passed through CMake/CTest on this Windows host using Zig and explicit Zig archiver rules. The DMA owner, GART storage and controllers compile in the native kext; actual allocation, mapper behavior and DMA remain untested.
+Memory work passes **1,618 register-layout assertions**, **59 memory-layout checks**, **58,536 GPUVM assertions**, and **35,364 VRAM allocator assertions**. The allocator is also checked against an independent page bitmap over 10,000 operations. The optional extracted target discovery payload increases register-layout coverage to 1,627 passing assertions. The HDP suite passes **895 assertions**, or **899** with that payload. GART's **2,229 assertions** cover register values, ordering, injected failures, timeouts, semaphore cleanup and verified disable. The VRAM transfer suite covers maximum-size uploads, selector boundaries, stale handles, aliases and partial failures using simulated MMIO. Earlier CTest baselines passed on this Windows host using Zig and explicit Zig archiver rules; current suite counts and report scope are tracked in [STATUS.md](STATUS.md). The DMA owner, GART storage and controllers compile in the native kext; actual allocation, mapper behavior and DMA remain untested.
 
 **A native x86_64 kext has compiled and linked on macOS 15.8 (24H22) using Apple Clang 17 and SDK 26.2.** Its Mach-O bundle, entry points and C++ initializer sections validate; every imported kernel symbol resolved against that Mac's kernel collection. The linker reports that the SDK's `libkmod.a` objects were built for a newer OS than the selected 15.0 baseline. Read-only `kmutil` diagnostics report dependency success and ordinary-user ownership errors for the build folder. This is an unsigned build, not a loading or GPU-execution result. Detailed source hashes, artifact metadata and diagnostic output are retained in the local build report.
 
@@ -162,7 +176,13 @@ The reported target is:
 
 ## Next work and sources
 
-The next integration must connect the engine coordinator to the PCI service with reset/POST and power management. GC11 initialization, kernel compute dispatch, DisplayPort link training and HDMI TMDS activation now exist; general rendering, interrupts, RADV integration, Metal translation, IOSurface sharing, display clocks and HDMI/DP modesetting remain required for the requested driver. The GPU copy/write/readback implementations have not executed on hardware. See [architecture and implementation boundaries](docs/architecture.md).
+HUBP scanout and the DPP/MPC/OPP pixel pipeline are being implemented in parallel.
+Integration must combine them with clocks, bandwidth/timing policy and HDMI/DP
+streams, and connect the engine coordinator to the PCI service with verified
+reset/POST, DMA retirement and power management. General rendering, interrupts,
+RADV integration, Metal and framebuffer/IOSurface sharing remain required.
+The GPU copy/write/readback implementations have not executed on hardware.
+See [current status](STATUS.md) and [implementation boundaries](docs/architecture.md).
 
 The repository's original code is [MIT licensed](LICENSE). NVIDIA's project was studied for architecture; its driver/frontend implementation was not copied. Linux's MIT-licensed ATOM definitions informed the wire layouts. The audited upstream revisions are recorded in [architecture.md](docs/architecture.md#source-baseline). Local `.research/` checkouts, downloaded tools, ROM dumps, and generated reports are excluded from version control.
 

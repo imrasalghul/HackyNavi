@@ -1,6 +1,12 @@
 # Architecture and implementation boundaries
 
-This milestone implements Navi 31 discovery and memory initialization components. The running service does not yet call the GART/HDP programming helpers or execute work on the GPU.
+The tree contains Navi 31 discovery, memory/firmware/engine protocols and parts
+of the DCN display path. The default opt-in PCI service captures diagnostics;
+the separate `-hackynavi-engines` opt-in now calls the real startup coordinator
+and exposes the bounded native compute client only after engine readiness.
+No target HackyNavi GPU execution, framebuffer output or Metal
+acceleration has been demonstrated. [STATUS.md](../STATUS.md) records current
+parallel work and validation; [PLAN.md](../PLAN.md) retains the full driver scope.
 
 ## Current components
 
@@ -48,9 +54,27 @@ This observer has no GPU provider attachment, user client, BAR mapping, MMIO acc
 
 `HackyNaviDevice` matches `1002:744c` only with `-hackynavi-device`. It opens the provider, validates the current configuration, maps assigned BAR5 uncached and serializes acquisition under a lock. It requires memory decoding already enabled and does not enable bus mastering or size-probe BARs. A start failure releases all mappings, buffers, locks and provider ownership.
 
-The service joins its provider's IOKit power tree with off/on states. BAR register access is deferred from `start()` to the on-state callback after the parent powers up; configuration/D0 and the assigned BAR mapping are rechecked on each power generation. The same mutex covers the complete acquisition and gates power-down. Sleep and shutdown remove the old discovery/memory/display snapshots. Teardown sets the stop/access gates, calls synchronous `PMstop()` outside the mutex, then drops buffers, mapping and PCI ownership. Matching can complete before acquisition; `SnapshotStatus` distinguishes waiting, validated, failed and powered-off states. This follows the [IOKit power-management contract](https://developer.apple.com/library/archive/documentation/DeviceDrivers/Conceptual/IOKitFundamentals/PowerMgmt/PowerMgmt.html), with real-header compilation and independent source review only. The service currently enables no GPU work, so an off callback has no submitted work to drain. Integrating the GART controller must add verified producer shutdown and allocation retirement before acknowledging power loss.
+The service joins its provider's IOKit power tree with off/on states. A
+sleepable worker performs capture after real parent-power admission. Default
+capture mode does not publish GPU DMA. The additional engine opt-in creates
+the paired graphics/audio owner, registers retirement before control writes,
+and enters Lifecycle/Engine under a thread-bound Operation. Primary PM-off,
+termination, shutdown and close revoke admission and join retirement outside
+the Device mutex before acknowledging power loss, unmapping or closing PCI.
+Fresh scope checks propagate through GART, firmware, queues, VM, display and
+reset callbacks. Runtime ordering and recovery remain untested. See
+[lifecycle containment](lifecycle-containment.md) and the current build records.
 
 The portable `device_discovery.hpp` / `.cpp` module accepts ordered MMIO callbacks with byte offsets. It polls the firmware-ready bit, reads VRAM size, then reads the discovery header at VRAM end minus 64 KiB. The default containing region is 10 KiB. If that signature is absent, it checks Linux's driver-scratch descriptor for another bounded VRAM range. System-memory discovery is unsupported. Poll counts/delays, alignment, address arithmetic, region bounds, declared binary length and caller capacity are checked. A transport error leaves an explicitly incomplete capture that must not be parsed. A complete capture is passed to both the inventory parser and the required-IP layout builder before any derived register access. After successful memory capture, the service retains the bounded private binary and its actual source/containing-region metadata for later initialization and reservation accounting. It also resolves and reports HDP layout status; an unsupported HDP layout does not invalidate the separate discovery report, but cannot be used to construct the GART controller.
+
+The current lifecycle changes move provider `open()`/`close()` outside the
+acquisition mutex, map BAR5 only in a powered generation and discard it on
+power-down, shutdown or termination. `willTerminate()` revokes CPU access;
+`didTerminate()` closes provider ownership before superclass termination can
+wait for `stop()`. This is diagnostic-service teardown, not GPU DMA retirement.
+The service still has no active engine owner. A PM error return or delayed-ACK
+timeout cannot be used to veto upstream power loss; enabling engines requires
+a real bounded stop/reset policy and sibling HDMI-audio reset exclusion.
 
 ### Register resolution and memory domains
 
@@ -100,7 +124,7 @@ These helpers require exclusive powered-device/register ownership, quiesced clie
 
 `vram_transfer.hpp` / `.cpp` adapt Cobalt64's MM_INDEX_HI / MM_INDEX / MM_DATA write path. Every transfer resolves a live allocator handle rather than trusting a supplied range. It validates the complete aligned subrange, CPU buffer and BAR extent before touching hardware. Upload writes the entire buffer, then independently selects and reads every DWORD to detect data/addressing mismatches, including aliases that immediate per-word readback could miss. The input image remains immutable. Transfers are bounded to 2 MiB and report partial data/selector writes and verified bytes separately. All-ones payloads are legitimate data. HDP visibility and GPU completion are separate operations.
 
-`HackyNaviGARTController` is the kernel integration of these components. It retains an existing open provider/owner and assigned uncached kernel BAR5 mapping, derives IP/HDP layouts from the supplied discovery snapshot, configures a private allocator from externally established arena/reservations, and allocates real DMA and VRAM storage. Data, writeback and display receive guarded mappings. `upload()` writes and verifies the VRAM table and zeroed default page through actual volatile MMIO callbacks. It then supports separate MMHUB and GFXHUB activation, with HDP visibility before publishing a root address. PCI memory decode/D0 are checked; bus mastering must already be enabled before hub activation.
+`HackyNaviGARTController` is the kernel integration of these components. It retains an existing open provider/owner and assigned uncached kernel BAR5 mapping, derives IP/HDP layouts from the supplied discovery snapshot, configures a private allocator from externally established arena/reservations, and allocates real DMA and VRAM storage. Data, writeback and display receive guarded mappings. `upload()` writes and verifies the VRAM table and zeroed default page through actual volatile MMIO callbacks. It then supports separate MMHUB and GFXHUB activation, with HDP visibility before publishing a root address. PCI memory decode/D0 are checked. Cold MMHUB installation requires bus mastering disabled; GFXHUB and runtime operations require it enabled. Engine clears BME with a checked 16-bit command write before allocation, installs MMHUB, then enables BME before firmware operations. BME-off is containment of new PCI traffic, not proof of engine or posted-write retirement.
 
 The controller takes a self-reference before any programming callback can change hardware. A partial enable/flush/retirement failure changes state to `FaultedRetained` and preserves DMA mappings, VRAM handles, the provider, open owner and BAR mapping. Successful retirement requires the caller to quiesce all GPU producers first, then disables GFXHUB before MMHUB and releases allocations only after verified disable. `releaseAfterDeviceReset()` performs resource cleanup after a separately verified reset; it does not itself reset hardware. Dropping the caller's object reference cannot bypass the hardware hold. The enclosing service must also defer PCI close and DMA-domain teardown until retirement succeeds.
 
@@ -278,7 +302,7 @@ The collector does not enable/read ROM, open PCI configuration, map resources, o
 | Headless RADV | Implement the Darwin winsys and kernel interface; compare offscreen output against reference images. |
 | Metal and display | Implement AIR/SPIR-V translation, resource/synchronization semantics, IOSurface sharing, DCN scanout, and WindowServer presentation. |
 
-The complete service startup sequence and userspace acceleration remain unfinished. Real hardware protocols for firmware, GART, GC initialization and graphics/SDMA submission exist, but have not executed on this GPU or been connected to the PCI service's full lifetime. RADV supplies an AMD userspace backend, but its Linux DRM transport cannot be used unchanged. The intended eventual path is:
+The PCI service now connects real firmware, GART, GC initialization and graphics/SDMA protocols to scoped startup and callback retirement. Target execution, complete power/resume/display behavior and userspace acceleration remain unverified or unfinished. RADV supplies an AMD userspace backend, but its Linux DRM transport cannot be used unchanged. The intended eventual path is:
 
 ```text
 Metal API → AIR/SPIR-V frontend → RADV/NIR/ACO → Darwin winsys
@@ -328,13 +352,190 @@ stream packets and native framebuffer integration. Tests exercise geometry,
 all four pipe routes, each admission guard, bounded timeouts and transport
 failure at every I/O position. These host tests do not establish visible output.
 
+`display_clock.hpp` / `.cpp` implement per-pipe DCN3.2 DPP DTO and OTG pixel
+dividers. The DTO uses an 8-bit modulo of 255 and rounds phase upward without
+32-bit overflow. Configuration requires a stopped OTG, blank/drained HUBP,
+unowned DTO controls, and caller-held DCCG/PM exclusion. Masked writes preserve
+other pipes' shared fields; shutdown restores acquired fields after disabling
+the selected DTO. Failed writes retain cleanup responsibility, including when
+the transport cannot establish whether a write reached the device. The owner
+must supply the actual global DPP clock and disconnect the DPP from MPC outputs.
+The native display owner now binds these operations to its acknowledged DAL
+DPP reference frequency under its display/firmware/GART locks. DPP power
+gating and the complete modeset pipeline are still required. Host
+tests cover rounding boundaries, all four pipes, and every setup/shutdown I/O
+failure; they do not measure a physical clock.
+
+`display_smu.hpp` / `.cpp` implement the separate Navi31 DAL SMU mailbox
+(MP1 C2PMSG 74/51/52). The controller validates the Navi31 IP layout, obtains
+the actual firmware and message-header versions, and requires PMFW 78.106.0
+or newer for the hard-min fulfillment query. It requests nonzero DISP/DPP/DCF/
+DTB clock minima and waits for both that clock's bit and DPREFCLK's bit before
+publishing the firmware-reported frequency. A single response-read budget
+bounds all mailbox and fulfillment polling. Hardware failures seal the owner;
+an ambiguous clock-request write retains its possible active constraint.
+Lowering a live request remains unavailable. Terminal release sends zero-MHz
+constraints only after the native owner has stopped clock consumers and
+display firmware, requiring every command acknowledgement. The native owner
+retains clock state and its Display lease across ambiguous failures; a verified
+device reset clears them through the existing reset-retirement path. The result
+is a firmware report, not a measured clock or complete bandwidth/watermark policy.
+
+`display_idle.hpp` / `.cpp` provide fresh read-only admission for these clock
+operations. They check every DCN3.2 OTG stopped/not busy, powered HUBP blank/drained,
+MPCC top/bottom/OPP and output selectors disconnected, MPCC idle/not busy, and
+MPCC update selection/lock status free. Discovery provides DMU base indices
+2 and 3; all addresses are validated against the BAR. The native owner keeps
+the lock across these checks and clock access, refuses shared clock changes
+while local links/streams/DTOs retain hardware, and stops owned DTOs before
+display firmware retirement. The caller must additionally exclude autonomous
+firmware/PM actors for the full operation. A successful check is not a cached
+quiescence token and does not retire any GPU allocation.
+
+Power status/config/status observations now distinguish settled DOMAIN0..3
+power-off from live HUBP drain state. A gated HUBP may read zero, so only its
+HUBP control read is skipped; OTG and MPC checks still run. Repeated snapshots
+reject observed power changes. Semantic register aliases are rejected. Live
+drain uses aggregate NO_OUTSTANDING_REQ plus blank/in-blank and reset-clear;
+it does not guess a completion value for the separate four-bit XRQ field.
+
+`display_power.hpp` / `.cpp` implement actual DOMAIN0..3 transitions under
+IP_REQUEST_EN, with bounded PGFSM completion and restoration of the original
+shared request-enable bit. Power-off admits only a stopped/disconnected route,
+retired fetch clients and disabled clocks/DTO. Gated HUBP/DPP windows are not
+read. Ambiguous writes seal ownership until independently verified retirement.
+The native display owner now stores four power controllers, requires owned
+power for DTO setup, retains its lease on failure and gates owned domains
+before display-firmware/minimum-clock retirement. This does not establish the
+still-required device-wide and autonomous-firmware exclusion.
+
+`hubp_scanout.hpp` / `.cpp` implement linear progressive RGB surfaces using
+live allocator handles, actual MC/physical translations and full footprint
+bounds. Configuration programs pitch/format/viewport/address registers. Flips
+retain current and pending allocations until pending-clear and both INUSE and
+EARLIEST_INUSE observations agree. Interrupt acknowledgement is separate from
+completion. Stop blanks/drains the owned fetcher and masks its flip interrupt;
+uncertain failures retain allocations. Native allocation pinning and requestor
+configuration are prerequisites, not created by this portable controller.
+
+`pixel_pipeline.hpp` / `.cpp` implement opaque, unscaled RGB DPP/DSCL/MPC/OPP
+programming on four same-index routes, including packed 8/10-bit formats.
+The owner enables the HUBP clock before downstream programming, connects MPC
+last, and verifies disconnect/idle before disabling HUBP/DPP/OPP clocks.
+MPC update selection is returned to F on retirement. Source-derived layout,
+admission and failure tests do not establish visible output or HDR support.
+
+The complete modeset still needs real bandwidth calculations, RQ/DLG/TTU,
+DET/watermarks, global-sync and address-translation initialization. Linux DML32
+uses floating-point math under Linux's explicit FPU context; the current kext
+build disables SSE/SSE2. The intended integration is a real userspace port of
+pinned DML32 that returns a typed integer register plan bound to actual captured
+inputs and their generation. The userspace calculation is now implemented in
+`userspace/display`: twenty unmodified AMD DML32 files with a narrow direct-VRAM,
+linear RGB32, progressive single-pipe adapter. Tests calculate clocks, seven
+watermarks, urgent latency/bandwidth fractions, global sync, DET and RQ/DLG/TTU
+for 1080p/2160p HDMI and legacy DP. Exact requested RGB24 link capacity is checked
+separately because upstream non-DSC admission automatically selects bpp. These
+are CPU calculations using an explicit test bounding box, not board measurements.
+Real ROM/SMU input binding, firmware watermark policy and native hardware
+application remain pending. In particular, Linux's GPUVM-enabled inputs cannot be copied
+blindly into this direct-VRAM VMID0 path.
+
+`dml32_encode.cpp` now maps all 70 named RQ/DLG/TTU members into the integer
+`displaybandwidth::Input`, validates mode/reference-clock consistency across
+four explicit calculation records, and rejects stale generations and numeric
+overflow. Clock minima round upward to kHz; watermark units follow upstream
+truncation to ns/per-thousand. Each set retains its own clock and transition
+requirements. This internal interface is not a wire ABI or hardware authority.
+
+`display_bandwidth.cpp` validates exact DCN3.2 masks, packs 39 timing registers
+and 36 watermark registers, and changes global DET/compbuf allocations by
+shrinking before growing with bounded SIZE_CURRENT acknowledgement. Its
+callbacks must acquire the native operational gate and retain the complete
+mode/clock/policy records. It rechecks stopped OTGs, powered and drained HUBPs,
+the direct-VRAM profile and the live DCHUB timer divider, never reading gated
+HUBPs or enabling fetch. Ambiguous writes retain ownership. Native gate/modeset
+integration remains unimplemented; compile and CPU tests are not modeset proof.
+
+The clarified physical target is Odyssey G90XF 4K165 over HDMI or DP. See
+[captured timing and EDID](monitor-g90xf-4k165.md). The current calculation
+profile covers legacy TMDS/DP only; FRL, DP DSC and required pipe splitting
+remain part of the full display objective.
+
+### Userspace shader compiler and kernel transport
+
+`userspace/metal` contains a real Rust AIR/LLVM-to-SPIR-V adapter with a CLI
+and owned-result C ABI. It vendors the pinned, unmodified LGPL translator
+library from the NVIDIA reference, with its notices and dependency licenses.
+Entry selection is exact; missing function constants and unsupported shader
+operations return errors. Actual SPIRV-Tools validation is required before
+publishing code. This component does not create an MTLDevice or compile
+SPIR-V to GFX11 ISA; the separate real Mesa/ACO backend below handles that
+offline compilation. The macOS Metal frontend and submission integration remain.
+
+Authored AIR fixtures, LLVM bitcode assembly/disassembly, C ABI allocation and
+failure paths are tested. Four translated compute dispatches have run on the
+physical 7900 XTX through AMD's Windows Vulkan ICD, checking 4,096 and 4,099
+results and guard words. That establishes semantics for those shaders through
+that backend, not execution through HackyNavi. Tests now include genuine AIR
+generated on mini by Apple's Metal runtime from the project's own shader.
+Native x86_64 compiler dylib, system-LLVM bitcode reader and real SPIR-V validator
+also pass that AIR through the C ABI on macOS. The helper's output yields the
+same SPIR-V as the LLVM20 path tested on Windows. It does not create a Metal
+device or make the Windows AMD backend available to macOS. `userspace/compiler`
+now uses actual pinned Mesa SPIR-V-to-NIR lowering and ACO to generate gfx1100
+wave32 code. The Apple add_one fixture produces 104 total/84 executable bytes,
+24 VGPR and 108 SGPR allocation, with no scratch/LDS/relocations. Changed
+arithmetic and local-size specializations alter code; unsupported features
+return errors without publishing a product. Code/config/descriptor/launch ABI
+metadata is retained. The compiler executable/C ABI also run on Intel macOS and
+produce the same code as Windows. This ACO binary has not been GPU-executed;
+its HackyNavi submission binding and the Metal frontend remain unfinished.
+
+`native_abi.hpp` and `userspace/transport` implement a bounded, versioned
+IOKit client protocol and actual native calls. The kext now implements a
+task-bound IOUserClient and ClientSession through Device/Lifecycle/Engine.
+The explicitly negotiated v1.1 built-in profile supports allocation, isolated
+mapping, copied I/O and one clear/copy dispatch. It exposes neither raw PM4 nor
+arbitrary shader code or CPU mappings. The older generic profile still requires
+all of its original capabilities and returns Unsupported on this smaller
+implementation. Envelope validation is not PM4 validation; the trusted VMID0
+startup queue is never exposed to applications.
+The portable VMID1–7 context protocol now programs and verifies separate GFXHUB3
+and MMHUB3 roots/ranges, publishes tables, enables the context and waits for real
+per-VMID invalidation acknowledgements. MMHUB uses its read-to-acquire semaphore.
+Zero physical/DMA roots are valid when properly encoded; address zero is not an
+invalid sentinel. Native sparse page trees and zeroed DMA buffers are owned by
+the session, with real group/GART access required for each hardware operation.
+One Operation spans sealed submission, GPU-written fence/readback and normal
+both-hub retirement. Queue/producer/sequence, read pointer and CP idle must
+match before releasing memory; a TLB ACK alone is insufficient. Immutable CPU
+results remain readable after retirement, bounded globally to 64 MiB and 64
+holders. Explicit Close reports retirement failure, and ambiguous exposed DMA
+remains retained. The native smoke executable is linked but has not run on the
+target. General compiled-shader launch, repeated asynchronous submission,
+scheduling, framebuffer/IOSurface and Metal integration remain. See the
+[client integration evidence](validation-client-display-inputs.md).
+
+### HDR boundary
+
+Current output work is SDR. Packed 10-bit formats and HDMI deep-color capability
+parsing do not establish HDR support. EDID HDR/EOTF/colorimetry parsing, HDMI/DP
+HDR metadata packets, the required color pipeline and macOS framebuffer/Metal
+EDR integration remain unimplemented. AVI currently supports only unspecified,
+BT.601 and BT.709 colorimetry and explicitly excludes HDR/extended colorimetry.
+The future path must validate actual sink behavior as well as metadata and
+pixel encoding; see Apple's [HDR/EDR presentation documentation](https://developer.apple.com/documentation/metal/performing-your-own-tone-mapping).
+
 ### Hardware access boundary
 
 Linux helpers named as reads are not necessarily free of register writes. In the pinned Linux source, `amdgpu_device_vram_access(..., false)` can fall back to writes of `MM_INDEX` / `MM_INDEX_HI`; its aperture path can invalidate HDP. The active acquisition path therefore belongs to the opt-in PCI service, not the passive observer. It uses assigned BAR resources and documented bootstrap registers, not broad register scans. Device power/reset/removal behavior remains a runtime validation requirement.
 
 ## Source baseline
 
-The architecture audit used these fixed revisions. They are research references, not vendored dependencies or completed ports.
+The architecture audit used these fixed revisions. Most are research references,
+not completed ports; the LGPL shader translator subset is now vendored as
+described above and in the third-party notices.
 
 | Project | Revision | Purpose |
 | --- | --- | --- |
@@ -345,10 +546,10 @@ The architecture audit used these fixed revisions. They are research references,
 | [Cobalt64](https://github.com/Almosst-DEV/Cobalt64/tree/d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65) | `d6c9aedf8e6526a39e349b5886cbc8c7ddf77f65` | Navi 48 bring-up and RADV Darwin transport; see the [separate audit](cobalt64-audit.md). |
 | [MacKernelSDK](https://github.com/acidanthera/MacKernelSDK/tree/3f750085caa17ec3a7880f11c11bf4f48cd6a164) | `3f750085caa17ec3a7880f11c11bf4f48cd6a164` | Real kernel headers for compile-only checks on Windows; based on macOS 11 headers with modifications. |
 
-The local audit also records these revisions in `.research/sources.json`; `.research/` is ignored by Git. No NVIDIA frontend or driver source was copied. Original project code is MIT licensed. The Cobalt64 PCI/MMIO adaptation preserves its MIT notice in source and [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md). Other future upstream imports need component-level license review; the research references do not imply a common license across those projects.
+The local audit also records these revisions in `.research/sources.json`; `.research/` is ignored by Git. No NVIDIA PolyForm frontend or kext source was copied. The translator subset retains LGPL-3.0-or-later licensing; original project code is MIT licensed. The Cobalt64 PCI/MMIO and userspace transport adaptations preserve their MIT notices in source and [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md). Other future upstream imports need component-level license review; the research references do not imply a common license across those projects.
 
 Apple's [IOService notification declarations](https://github.com/apple-oss-distributions/xnu/blob/main/iokit/IOKit/IOService.h) and [implementation](https://github.com/apple-oss-distributions/xnu/blob/main/iokit/Kernel/IOService.cpp) informed the observer's ownership/lifetime design. Those source references do not replace compiling against the chosen macOS SDK or testing the intended runtime.
 
-`scripts/cross-check-kext.py` compiles both services and shared code to x86_64 Mach-O objects using Zig and the pinned MacKernelSDK. Its report checks module definitions and both C++ initializer sections and records deployment metadata. The tested Zig linker rejects `-kext`; no linked bundle is produced. The native build additionally compiles and links with Apple Clang 17 and SDK 26.2 on macOS 15.8. Mach-O entry points/initializers validate and all imported symbols resolve against the host kernel collection. Read-only kmutil diagnostics report dependencies OK and build-folder ownership errors. SDK libkmod objects also produce a newer-deployment-version warning. Loading and target hardware behavior remain unverified.
+`scripts/cross-check-kext.py` compiles both services and shared code to x86_64 Mach-O objects using Zig and the pinned MacKernelSDK. Its report checks module definitions and both C++ initializer sections and records deployment metadata. The tested Zig linker rejects `-kext`; no linked bundle is produced. The native build additionally compiles and links with Apple Clang 17 and SDK 26.2 on macOS 15.8. Mach-O entry points/initializers validate and all imported symbols resolve against the host kernel collection. Read-only kmutil diagnostics report dependencies OK and build-folder ownership errors. SDK libkmod objects also produce a newer-deployment-version warning. The frozen 61-source passive observer has loaded on the target macOS 15.8.1 build 24H32 with matching UUID and GPU identity; see [the first boot report](validation-2026-10-10-passive-boot.md). The later frozen `6a3a8173c6e2` capture has also loaded with a matching UUID and valid ROM/discovery/memory snapshots. New engine/client development builds remain untested on the target; controlled display and Metal are unfinished.
 
 The original offline corpus used eight AMD firmware files plus an unrelated Vega 10 discovery sample from [linux-firmware commit `afabaf773c4c2e2c841429933a6a084a5af4d14d`](https://gitlab.com/kernel-firmware/linux-firmware/-/tree/afabaf773c4c2e2c841429933a6a084a5af4d14d). The tracked `firmware/manifest.json` now separately specifies nine binaries embedded by kernel builds, including Navi31 RLC and DCN3.2 DMCUB. These support the current non-MES graphics/SDMA and display-firmware profile; video firmware is not included. Original binaries remain under their AMD license and are fetched/generated outside version control. No target-hardware firmware execution has occurred.

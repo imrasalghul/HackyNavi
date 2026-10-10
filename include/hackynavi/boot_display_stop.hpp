@@ -12,7 +12,12 @@ struct Io { void* context;bool (*read32)(void*,uint32_t,uint32_t&);
 struct PollOptions { uint32_t iterations,intervalUs; }; // <=100ms per wait
 struct Result { Status status;bootdisplay::Status captureStatus;
     uint32_t reads,writes,polls,lastRegister,lastValue;uint8_t pipe,blankedMask;
-    bool writesMayHaveOccurred,retentionRequired; };
+    bool writesMayHaveOccurred,retentionRequired;
+    // A successful read callback, including all ones, is distinct from a
+    // usable observation. False after a failed read or any write attempt.
+    bool lastReadSucceeded;
+    bootdisplay::PowerProbe lastPowerProbe;
+};
 struct Access;
 class State {
 public:

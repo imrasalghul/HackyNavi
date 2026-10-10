@@ -61,6 +61,12 @@
       "path": "amdgpu/dcn_3_2_0_dmcub.bin",
       "bytes": 284432,
       "sha256": "6c7f67c12c531e812cf97d8d4188531fad6c5e260e75293b270b39b46793c053"
+    },
+    {
+      "id": "PspTa",
+      "path": "amdgpu/psp_13_0_0_ta.bin",
+      "bytes": 271616,
+      "sha256": "ac2454a36618d8568e798c6000bf3e19fdabf46d46038b92635adc3cb01bd198"
     }
   ]
 }

@@ -24,19 +24,31 @@ namespace {
 constexpr size_t kControl=static_cast<size_t>(bootdisplay::PipeRegister::Control);
 constexpr uint32_t kVolatile=0x70ff000a,kW1Clear=0x84000000;
 bool read(const Io& io,uint32_t offset,uint32_t& value,Result& r) {
-    r.lastRegister=offset;++r.reads;
+    r.lastRegister=offset;r.lastValue=0;r.lastReadSucceeded=false;++r.reads;
     if(!io.read32(io.context,offset,value)){r.status=Status::ReadFailed;return false;}
-    r.lastValue=value;if(value==UINT32_MAX){r.status=Status::DeviceUnavailable;return false;}return true;
+    r.lastValue=value;r.lastReadSucceeded=true;
+    if(value==UINT32_MAX){r.status=Status::DeviceUnavailable;return false;}return true;
 }
 bool equal(const Io& io,uint32_t offset,uint32_t expected,uint32_t mask,Status fail,Result& r) {
     uint32_t value=0;if(!read(io,offset,value,r))return false;
     if((value&mask)!=(expected&mask)){r.status=fail;return false;}return true;
 }
 bool power(const Io& io,const bootdisplay::Layout& l,const bootdisplay::Snapshot& s,size_t p,Result& r) {
-    r.pipe=uint8_t(p);
-    return equal(io,l.power[p],s.power[p],UINT32_MAX,Status::PowerChanged,r) &&
-        equal(io,l.powerConfig[p],s.powerConfig[p],UINT32_MAX,Status::PowerChanged,r) &&
-        equal(io,l.power[p],s.power[p],UINT32_MAX,Status::PowerChanged,r);
+    // The actual cold capture admitted current PGFSM0 or2 and the matching
+    // request. Preserve every raw bit here, including desired bit28: either
+    // initial OFF encoding is allowed, but a later 0x80000000/0x90000000
+    // change invalidates this retained epoch before any gated-window access.
+    r.pipe=uint8_t(p);r.lastPowerProbe={};r.lastPowerProbe.pipe=uint8_t(p);
+    const uint32_t registers[]={l.power[p],l.powerConfig[p],l.power[p]};
+    const uint32_t expected[]={s.power[p],s.powerConfig[p],s.power[p]};
+    uint32_t* values[]={&r.lastPowerProbe.statusBefore,&r.lastPowerProbe.config,&r.lastPowerProbe.statusAfter};
+    for(unsigned i=0;i<3;++i) {
+        uint32_t value=0;const bool ok=read(io,registers[i],value,r);
+        if(r.lastReadSucceeded){*values[i]=value;r.lastPowerProbe.readsSucceededMask|=uint8_t(1U<<i);}
+        if(!ok)return false;
+        if(value!=expected[i]){r.status=Status::PowerChanged;return false;}
+    }
+    return true;
 }
 }
 struct Access {
@@ -94,12 +106,14 @@ struct Access {
         r.status=Status::DrainTimeout;return false;
     }
     static Status capture(const bootdisplay::Layout& l,const MemoryLayout& m,const Io& io,State& s,Result& r) {
-        r=Result{};r.pipe=0xff;
+        r=Result{};r.pipe=r.lastPowerProbe.pipe=0xff;
         if(s.phase_!=Phase::Fresh)return finish(s,r,Status::InvalidState);
         if(!io.read32)return finish(s,r,Status::InvalidArgument);
         bootdisplay::Capture captured={};
         r.captureStatus=bootdisplay::capturePostedCold(l,m,{io.context,io.read32},captured);
         r.reads=captured.readsAttempted;r.lastRegister=captured.lastRegister;
+        r.pipe=captured.failedPipe;r.lastValue=captured.lastValue;
+        r.lastReadSucceeded=captured.lastReadSucceeded;r.lastPowerProbe=captured.lastPowerProbe;
         if(r.captureStatus!=bootdisplay::Status::Ok)return finish(s,r,Status::CaptureRejected);
         // Clock control is the next DWORD after DCHUBP_CNTL on all four HUBPs.
         for(size_t p=0;p<bootdisplay::kPipeCount;++p) {
@@ -117,7 +131,7 @@ struct Access {
         s.phase_=Phase::Armed;return finish(s,r,Status::Ok);
     }
     static Status stop(const Io& io,const PollOptions& p,State& s,Result& r) {
-        r=Result{};r.pipe=0xff;
+        r=Result{};r.pipe=r.lastPowerProbe.pipe=0xff;
         if(s.phase_!=Phase::Armed)return finish(s,r,Status::InvalidState);
         if(!io.read32 || !io.write32 || !io.delayUs || !p.iterations || !p.intervalUs ||
             p.intervalUs>100 || uint64_t(p.iterations)*p.intervalUs>100000)return finish(s,r,Status::InvalidArgument);
@@ -134,6 +148,7 @@ struct Access {
             value=(value&~(0x1000U|kW1Clear))|1;
             if(!power(io,s.layout_,s.capture_.snapshot,pipe,r))return fail(s,r);
             s.wrote_=true;s.blanked_|=uint8_t(1U<<pipe);++r.writes;r.lastRegister=s.layout_.pipe[pipe][kControl];r.lastValue=value;
+            r.lastReadSucceeded=false;
             if(!io.write32(io.context,r.lastRegister,value)){r.status=Status::WriteFailed;return fail(s,r);}
             if(!drain(s,io,pipe,p,true,r))return fail(s,r);
         }

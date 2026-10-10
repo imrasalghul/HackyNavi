@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 namespace hackynavi {
-enum class FirmwareResourceId { PspSos, Sdma, Smu, GcPfp, GcMe, GcMec, GcImu, GcRlc, Dmcub };
+enum class FirmwareResourceId { PspSos, Sdma, Smu, GcPfp, GcMe, GcMec, GcImu, GcRlc, Dmcub, PspTa };
 struct FirmwareResource {
     const uint8_t* data;
     size_t bytes;

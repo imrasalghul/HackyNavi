@@ -109,14 +109,24 @@ bool guard(const Layout& l,const Io& io,Result& r) {
         match(io,l.dmubControl,0x10000,0,Status::FirmwareNotStopped,r) &&
         match(io,l.dmubReset,1,1,Status::FirmwareNotStopped,r);
 }
-bool power(const Layout& l,const Io& io,size_t pipe,bool& off,Result& r) {
+bool power(const Layout& l,const Io& io,size_t pipe,bool& off,Result& r,
+    uint32_t& firstState,uint32_t& firstConfig,bool& seen) {
     r.pipe=static_cast<uint8_t>(pipe);uint32_t status=0,config=0,after=0;
     if(!read(io,l.power[pipe],status,r) || !read(io,l.powerConfig[pipe],config,r) || !read(io,l.power[pipe],after,r))return false;
-    status&=0xd0000000;after&=0xd0000000;config&=0x101;
-    if(status!=after || !((status==0 && !(config&0x100)) || (status==0x90000000 && config==0x100))) {
+    // DOMAIN_DESIRED_PWR_STATE (bit28) is not the current PGFSM field.
+    // Linux dcn32_hubp_pg_control polls current bits31:30 for ON=0/OFF=2.
+    // Retain the raw bit28 observation, reject reserved bits and explicit
+    // conflicting gate requests, and compare all raw power/config samples.
+    const bool on=(status==0 || status==0x10000000) && config<=1;
+    const bool poweredOff=(status==0x80000000 || status==0x90000000) && config==0x100;
+    if(status!=after || !(on || poweredOff)) {
         finish(r,Status::PowerUnavailable);return false;
     }
-    off=status==0x90000000;return true;
+    if(seen && (firstState!=status || firstConfig!=config)) {
+        finish(r,Status::UnstableSnapshot);return false;
+    }
+    firstState=status;firstConfig=config;seen=true;
+    off=poweredOff;return true;
 }
 bool observed(const Io& io,uint32_t reg,const Field& f,Status failure,Result& r,uint32_t& first) {
     uint32_t value=0;if(!match(io,reg,f.mask,f.value,failure,r,&value))return false;
@@ -136,6 +146,7 @@ Status checkStopped(const Layout& l,const Io& io,Result& r) {
     if(!io.read32 || !valid(l))return finish(r,Status::InvalidArgument);
     uint32_t ih[kIhRegisters]={},wb[kWbRegisters]={},mall=0,config[kPipes]={},status[kPipes]={};uint8_t offMask=0;
     uint32_t subvp[kPipes]={},vmPage[kPipes]={};
+    uint32_t powerState[kPipes]={},powerConfig[kPipes]={};bool powerSeen[kPipes]={};
     for(r.pass=0;r.pass<2;++r.pass) {
         if(!guard(l,io,r))return r.status;
         for(size_t i=0;i<kIhRegisters;++i)
@@ -149,30 +160,30 @@ Status checkStopped(const Layout& l,const Io& io,Result& r) {
         if(!observed(io,l.mall,{0,0x11,0},Status::MallNotStopped,r,mall))return r.status;
         uint8_t nowOff=0;
         for(size_t p=0;p<kPipes;++p) {
-            bool off=false;if(!power(l,io,p,off,r))return r.status;
+            bool off=false;if(!power(l,io,p,off,r,powerState[p],powerConfig[p],powerSeen[p]))return r.status;
             if(r.pass && off!=bool(offMask&(1U<<p)))return finish(r,Status::PowerUnavailable);
             if(off){nowOff|=uint8_t(1U<<p);continue;}
             if(!observed(io,l.mallConfig[p],{0,7,0},Status::MallNotStopped,r,config[p]))return r.status;
-            if(!power(l,io,p,off,r))return r.status;
+            if(!power(l,io,p,off,r,powerState[p],powerConfig[p],powerSeen[p]))return r.status;
             if(off)return finish(r,Status::PowerUnavailable);
             // An armed start-line SubVP trigger can look idle before its line.
             // Check configuration, not only its instantaneous activity status.
             if(!observed(io,l.mallSubvp[p],{0,1,0},Status::MallNotStopped,r,subvp[p]))return r.status;
-            if(!power(l,io,p,off,r))return r.status;
+            if(!power(l,io,p,off,r,powerState[p],powerConfig[p],powerSeen[p]))return r.status;
             if(off)return finish(r,Status::PowerUnavailable);
             if(!observed(io,l.vmPageConfig[p],{0,0x80,0},Status::MallNotStopped,r,vmPage[p]))return r.status;
-            if(!power(l,io,p,off,r))return r.status;
+            if(!power(l,io,p,off,r,powerState[p],powerConfig[p],powerSeen[p]))return r.status;
             if(off)return finish(r,Status::PowerUnavailable);
             // PREFETCH_COMPLETE can remain latched after MALL becomes unused.
             if(!observed(io,l.mallStatus[p],{0,0xfffdf,0x80000},Status::MallNotStopped,r,status[p]))return r.status;
-            if(!power(l,io,p,off,r))return r.status;
+            if(!power(l,io,p,off,r,powerState[p],powerConfig[p],powerSeen[p]))return r.status;
             if(off)return finish(r,Status::PowerUnavailable);
         }
         if(r.pass && nowOff!=offMask)return finish(r,Status::PowerUnavailable);
         offMask=nowOff;
         if(!guard(l,io,r))return r.status;
     }
-    for(size_t p=0;p<kPipes;++p){bool off=false;if(!power(l,io,p,off,r))return r.status;
+    for(size_t p=0;p<kPipes;++p){bool off=false;if(!power(l,io,p,off,r,powerState[p],powerConfig[p],powerSeen[p]))return r.status;
         if(off!=bool(offMask&(1U<<p)))return finish(r,Status::PowerUnavailable);}
     if(!guard(l,io,r))return r.status;
     r.poweredOffMask=offMask;r.pipe=0xff;return finish(r,Status::Ok);

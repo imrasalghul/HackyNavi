@@ -39,6 +39,25 @@ SOFTWARE.
 
 ## Linux AMD GPUVM, memory and engine protocols
 
+`src/display_clock.cpp` adapts DCN3.2 per-pipe DTO/divider programming from
+`dcn20_dccg.c` and `dcn32_dccg.c`. `src/display_smu.cpp` adapts the DAL mailbox
+and clock-minimum completion protocol from `dcn32_clk_mgr_smu_msg.c` and the
+DCN3.2 `dalsmc.h`. These use the pinned Linux revision below and retain AMD's
+MIT notices; the port adds stricter validation and bounded failure handling.
+`src/display_idle.cpp` uses the DCN3.2 register definitions and the disconnected
+selector/idle conditions from `display/dc/mpc/dcn10/dcn10_mpc.c`, retaining its
+AMD MIT notice.
+
+`src/display_power.cpp` adapts DOMAIN0..3 and IP_REQUEST_EN sequencing from
+`dcn32_hwseq.c`, `dcn20_hwseq.c` and `dcn10_hwseq.c`. `src/hubp_scanout.cpp`
+adapts HUBP surface, address, flip and blank/drain protocols from
+`dcn10_hubp.c`, `dcn20_hubp.c`, `dcn30_hubp.c` and `dcn32_hubp.c`.
+`src/pixel_pipeline.cpp` adapts DPP/CNVC/DSCL, MPC and OPP programming from
+the DCN10/20/30/32 DPP, MPC and OPP implementations, including
+`dcn10_dpp_dscl.c`. All three use generated DCN3.2 register definitions at
+the pinned Linux revision and preserve AMD MIT notices in source. These ports
+add bounded validation and ownership handling; they do not import DML policy.
+
 `src/hdmi_stream.cpp` adapts HDMI packet scheduling and FIFO sequencing from
 `dcn30_dio_stream_encoder.c` and `dcn32_dio_stream_encoder.c` at the pinned
 Linux revision, retaining AMD's MIT notice.
@@ -139,6 +158,60 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+## Userspace AIR shader compiler
+
+`userspace/metal/vendor/metal2vulkan` contains the unmodified translator
+library/CLI source subset from `translator/translator` at NVIDIA reference
+commit `508f3d2496e78a9640d59128a56ddb5a53061606`. Its package attributes
+metal2vulkan to Anees Iqbal and contributors and identifies the original
+repository as `https://github.com/steelbrain/metal2vulkan`.
+
+This translator is **LGPL-3.0-or-later**, separately from HackyNavi's MIT code.
+The complete LGPL and GPL license texts are retained in its `LICENSE` and
+`COPYING`; per-file provenance is in `userspace/metal/vendor/source-manifest.json`.
+The NVIDIA project's PolyForm driver/frontend implementation is not included.
+See [compiler notices](userspace/metal/NOTICE.md) and the resolved Cargo
+dependency license files/manifest under `userspace/metal/licenses`.
+
+HackyNavi's compiler adapter, C interface and authored fixtures are MIT.
+LLVM and Khronos SPIRV-Tools are external compiler/validator tools, not part
+of the kext. The optional Vulkan semantics test calls the installed operating
+system's driver through `ash`; this is not HackyNavi GPU execution.
+
+## Userspace AMD shader backend
+
+`userspace/compiler` is an MIT HackyNavi adapter built against Mesa revision
+`35b085c4c067f198ce0b6437d94678e47b9c645f`: NIR, ACO, AMD common helpers and
+utilities. Original per-file licenses and source hashes are retained under
+`userspace/compiler/licenses/mesa` and `source-manifest.json`. Staged build
+compatibility changes are recorded in its `NOTICE.md`; the pinned checkout is
+not patched. Cobalt64 informed boundary review; its winsys, device, validator
+and frontend implementations were not copied into this adapter.
+
+`userspace/compiler/fixtures/apple-add-one` preserves one authored MIT kernel's
+recorded AIR/SPIR-V/ACO product and its exact provenance/license chain. The
+native sealed class embeds only its 104-byte generated machine-code image;
+Mesa and the translator are not linked into the kext. The generated header
+is reproducibly verified against the pinned artifact, and no hardware
+execution is implied by packaging it. See the fixture's README and manifest.
+
+## Userspace AMD display calculations
+
+`userspace/display/vendor/dml` contains twenty unmodified AMD DML32 source and
+header files from Linux revision `3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0`.
+These files retain their MIT copyright and permission notices. The source
+manifest records exact paths, sizes and hashes. The test-only reference IP/SoC
+initializers also preserve their AMD notice. Original userspace compatibility
+and adapter code is MIT licensed; it invokes the real formulas outside the
+kernel. See `userspace/display/NOTICE.md` for the component boundary.
+
+The production `userspace/display/dml32_asic.c` policy adapter and
+`src/display_model_input.cpp` reference acquisition adapt the same pinned
+AMD DCN3.2 sources and retain AMD's MIT notice. Their board/clock derivations,
+synthetic DC-ceiling calculation policy and source links are described in
+`userspace/display/PROFILE.md`. These are separate from the unchanged vendor
+DML formulas and from the explicitly synthetic test observations.
 
 ## AMD binary firmware
 

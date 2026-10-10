@@ -37,11 +37,13 @@ Status encodeClearState(const Navi31IpLayout&,uint8_t*,size_t);
 
 // PSP-loaded GC11.0.0 only, same powered reset epoch as firmware/SMU States.
 // Caller has enabled VMID0 GFXHUB and excluded every queue/reset/PM/register
-// selector user. MES stays disabled. Only VMID0 kernel work is configured;
-// other VMIDs are required inactive. Rendering users need later VM ownership.
+// selector user. MES stays disabled. VMID0 kernel policy is preserved;
+// graphics VMID1..7 receive the Linux shader-memory configuration and private/
+// shared aperture bases, but remain inactive until separately owned/published.
+// Other VMIDs are required inactive. This does not admit general shader ISA.
 // Uploads the complete CSB through owned VRAM with independent readback+HDP,
 // programs each RS64 PFP/ME/MEC pipe's firmware start PC, pulses pipe resets,
-// sets Navi31 golden TCP_CNTL and VMID0 shader-memory policy, disables GDS/GWS/
+// sets Navi31 golden TCP_CNTL and VMID0..7 shader-memory policy, disables GDS/GWS/
 // OA for nonzero VMIDs, publishes RLC CSIB and enables SRM. Leaves CP halted.
 // Does NOT use direct-loader IC cache/TMR programming; PSP owns that setup.
 // caller supplies >=4096B nonaliasing CPU workspace and a distinct owned CSB
@@ -57,6 +59,33 @@ Status prepare(const Navi31IpLayout&,const gfxfw::Files&,const gfxfw::State&,
 struct RetirementIo { void* context; bool (*read32)(void*,uint32_t,uint32_t&);
     bool (*write32)(void*,uint32_t,uint32_t); void (*delayUs)(void*,uint32_t); };
 struct RetirementPollOptions { uint32_t iterations,intervalUs; };
+// Separate terminal journal for the actual firmware owner before a queue or
+// clear-state owner exists. It never represents a prepared CSIB allocation.
+class AutoloadRetirement {
+public:
+    AutoloadRetirement():attempted_(false),complete_(false) {}
+    AutoloadRetirement(const AutoloadRetirement&)=delete;
+    AutoloadRetirement& operator=(const AutoloadRetirement&)=delete;
+    bool attempted() const { return attempted_; }
+    bool complete() const { return complete_; }
+    bool needsFirmwareRetention() const { return attempted_&&!complete_; }
+private:
+    bool attempted_,complete_; friend struct Access;
+};
+// Terminal SAME-epoch retirement of successfully autoloaded firmware only.
+// Caller is the real firmware owner and holds all firmware/TMR allocations,
+// selector/PM/reset exclusion, an enabled VMID0, and no queue or VM owner.
+// Requires fresh exact zero CSIB hi/lo/length and disabled SRM BEFORE any
+// write; an unknown/nonzero CSIB is never cleared or adopted. Checks halted
+// CP/MEC/MES and physical ring inactivity, uses the same safe-mode/stop/drain
+// as owned-CSIB retirement, then rechecks zero CSIB, SRM and all guards.
+// Once inspection starts, any failure seals this journal and retains all
+// firmware. Success proves this RLC path only; PSP destruction remains a
+// separate real protocol. Result.clearStateRetentionRequired stays false:
+// no clear-state allocation is claimed by this API. Inspect the journal for
+// firmware retention, including on repeated calls. No synthetic State.
+Status retireAutoloadRlc(const Navi31IpLayout&,uint64_t barBytes,const gfxfw::State&,
+    const smu::State&,const RetirementIo&,const RetirementPollOptions&,AutoloadRetirement&,Result&);
 // Terminal teardown within the SAME powered reset epoch as prepare/SMU.
 // Caller already drained and stopped every queue, holds GC selector/PM/reset
 // exclusion, and pins the CSB through this call. No queue or PM actor may run

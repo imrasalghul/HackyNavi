@@ -31,6 +31,46 @@ struct Result {
     uint32_t biosScratch7, sosSignOfLife;
 };
 
+constexpr size_t kGuardInventoryWords = 77;
+constexpr size_t kGuardInventoryMaskWords = (kGuardInventoryWords + 31) / 32;
+enum class GuardInventoryStatus { Ok, InvalidArgument, LayoutRejected, AccessDenied,
+    ReadFailed, DeviceUnavailable, PriorDriverRequiresReset };
+struct GuardInventoryIo {
+    void* context;
+    bool (*valid)(void*); // Current native Operation/map/power lifetime, not a cached flag.
+    bool (*read32)(void*, uint32_t byteOffset, uint32_t& value);
+};
+struct GuardInventory {
+    GuardInventoryStatus status;
+    Status layoutStatus;
+    uint32_t offsets[kGuardInventoryWords], values[kGuardInventoryWords];
+    uint32_t guardMasks[kGuardInventoryWords], guardExpected[kGuardInventoryWords];
+    uint32_t attempted[kGuardInventoryMaskWords], readSucceeded[kGuardInventoryMaskWords];
+    uint32_t valid[kGuardInventoryMaskWords], guardCompared[kGuardInventoryMaskWords];
+    uint32_t guardMismatch[kGuardInventoryMaskWords];
+    uint32_t reads, lastIndex, lastOffset, lastValue;
+    bool lastReadSucceeded, complete, architectureCompared, architectureMatch, rs64;
+    uint32_t sosAfter;
+    bool sosAfterAttempted, sosAfterReadSucceeded, sosAfterValid;
+};
+// Bounded historical pre-control inventory using the same resolved CP/SDMA
+// register table as quiesceCpSdma. Requires the same powered/awake/exclusive
+// GC/SDMA/MMHUB/MP0 cold access contract below. valid is checked before/after
+// each successful read. No writes, delays, polling or allocation occur.
+// Initial nonzero SOS stops before GC/SDMA reads; final SOS rechecks cold state.
+// Other semantic guard mismatches do not hide independently readable words.
+// Ok/complete describes 78 valid reads, even with guardMismatch or mismatched
+// architecture; it is NEVER admission, quiescence, ownership or stop proof.
+// Order: SOS,ME,legacyMEC,RS64MEC,MEC_ISA,GFX_ARCH,MES,CP_STAT,GRBM_STATUS,
+// GFX contexts0..15,MM contexts0..15, then each SDMA's queue0..7 RB/IB,F32,STATUS.
+// Unattempted/callback-failed values remain zero. All-ones/post-read revocation
+// keeps raw callback data with readSucceeded set and valid clear. Stops globally
+// on those failures. First/final SOS mismatches have valid raw observations.
+// Caller retains output off stack; all input/output/callback storage disjoint.
+GuardInventoryStatus captureGuardInventory(const Navi31IpLayout&, uint64_t barBytes,
+    const GuardInventoryIo&, GuardInventory&);
+const char* guardInventoryStatusString(GuardInventoryStatus);
+
 // Read-only Linux Navi31 first-attach decision: nonzero MP0 C2PMSG81 requires
 // ASIC reset; otherwise BIOS scratch7 bit0x200 records completed ASIC_Init.
 // biosScratchRegisterDword comes from the bounded FirmwareInfo3.4/3.5 decoder,

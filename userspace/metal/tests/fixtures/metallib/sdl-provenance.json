@@ -1,0 +1,32 @@
+{
+  "repository": "https://github.com/libsdl-org/SDL",
+  "commit": "fa24d868ac2f8fd558e4e914c9863411245db8fd",
+  "tag": "release-2.30.11",
+  "files": {
+    "SDL_shaders_metal_osx.h": {
+      "url": "https://raw.githubusercontent.com/libsdl-org/SDL/fa24d868ac2f8fd558e4e914c9863411245db8fd/src/render/metal/SDL_shaders_metal_osx.h",
+      "bytes": 134878,
+      "sha256": "76d692dec14277a05bddc845b79c2c63d50c9e09e0f9822fe5428723581f7292"
+    },
+    "build-metal-shaders.sh": {
+      "url": "https://raw.githubusercontent.com/libsdl-org/SDL/fa24d868ac2f8fd558e4e914c9863411245db8fd/src/render/metal/build-metal-shaders.sh",
+      "bytes": 845,
+      "sha256": "12b1305f0ba8e5486770f13674036a7114f226a2f93759f239f31251fecae51d"
+    },
+    "SDL_shaders_metal.metal": {
+      "url": "https://raw.githubusercontent.com/libsdl-org/SDL/fa24d868ac2f8fd558e4e914c9863411245db8fd/src/render/metal/SDL_shaders_metal.metal",
+      "bytes": 3691,
+      "sha256": "a86d7d2e8cfcdf0dd7d2907a71cbae9bdf9501402836319c9ae64e5e7a723eec"
+    },
+    "SDL-LICENSE.txt": {
+      "url": "https://raw.githubusercontent.com/libsdl-org/SDL/fa24d868ac2f8fd558e4e914c9863411245db8fd/LICENSE.txt",
+      "bytes": 884,
+      "sha256": "97f35b302b361680ec1e891e95d2d52097bb95abff361434916d99dc1305f127"
+    },
+    "sdl-2.30.11-macos.metallib": {
+      "source": "SDL_shaders_metal_osx.h byte array, unchanged",
+      "bytes": 21858,
+      "sha256": "7c898daf138f3d72385140b81f99578628fb6972a8dde31cc3382a0c40e2bc26"
+    }
+  }
+}
